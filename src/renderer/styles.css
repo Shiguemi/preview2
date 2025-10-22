@@ -505,6 +505,20 @@ body {
     text-align: center;
 }
 
+.preload-indicator {
+    background: #0066cc;
+    color: #ffffff;
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    opacity: 0.8;
+    animation: pulse 1.5s infinite;
+}
+
+.preload-indicator.hidden {
+    display: none;
+}
+
 /* Fullscreen mode */
 .modal.fullscreen {
     background: #000000;
