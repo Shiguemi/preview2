@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Viewer Pro</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <h1 class="app-title">Image Viewer Pro</h1>
+            <div class="folder-info">
+                <span id="current-folder">No folder selected</span>
+                <span id="image-count" class="image-count">0 images</span>
+            </div>
+        </div>
+        <div class="header-right">
+            <button id="select-folder-btn" class="btn btn-primary">
+                <i class="icon">📁</i>
+                Select Folder
+            </button>
+            <button id="recursive-toggle" class="btn btn-toggle" title="Toggle recursive scanning">
+                <i class="icon">🔄</i>
+                Recursive
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h3>Filters</h3>
+            </div>
+            <div class="filter-section">
+                <label class="filter-label">
+                    <input type="checkbox" id="show-jpg" checked>
+                    <span>JPEG (.jpg, .jpeg)</span>
+                </label>
+                <label class="filter-label">
+                    <input type="checkbox" id="show-png" checked>
+                    <span>PNG (.png)</span>
+                </label>
+                <label class="filter-label">
+                    <input type="checkbox" id="show-exr" checked>
+                    <span>EXR (.exr)</span>
+                </label>
+                <label class="filter-label">
+                    <input type="checkbox" id="show-other" checked>
+                    <span>Other formats</span>
+                </label>
+            </div>
+            
+            <div class="sidebar-section">
+                <h4>Thumbnail Size</h4>
+                <input type="range" id="thumbnail-size" min="100" max="300" value="200" class="slider">
+                <span id="size-value">200px</span>
+            </div>
+
+            <div class="sidebar-section">
+                <h4>Sort By</h4>
+                <select id="sort-by" class="select">
+                    <option value="name">Name</option>
+                    <option value="size">File Size</option>
+                    <option value="type">Type</option>
+                </select>
+            </div>
+        </aside>
+
+        <!-- Gallery -->
+        <section class="gallery-container">
+            <!-- Loading State -->
+            <div id="loading-state" class="loading-state hidden">
+                <div class="spinner"></div>
+                <p>Scanning folder...</p>
+                <div id="scan-progress" class="progress-bar">
+                    <div class="progress-fill"></div>
+                </div>
+            </div>
+
+            <!-- Empty State -->
+            <div id="empty-state" class="empty-state">
+                <div class="empty-icon">🖼️</div>
+                <h2>No Images Found</h2>
+                <p>Select a folder to start viewing images</p>
+                <button id="empty-select-btn" class="btn btn-primary">Select Folder</button>
+            </div>
+
+            <!-- Gallery Grid -->
+            <div id="gallery" class="gallery hidden"></div>
+        </section>
+    </main>
+
+    <!-- Image Viewer Modal -->
+    <div id="image-viewer" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="image-info">
+                    <h3 id="modal-image-name">Image Name</h3>
+                    <span id="modal-image-details">Loading...</span>
+                </div>
+                <button id="close-modal" class="btn btn-icon" title="Close (Esc)">
+                    <i class="icon">✕</i>
+                </button>
+            </div>
+            
+            <div class="modal-body">
+                <div class="image-container">
+                    <img id="modal-thumbnail" class="modal-thumbnail" src="" alt="Thumbnail placeholder">
+                    <img id="modal-image-1" class="modal-image active" src="" alt="Full size image">
+                    <img id="modal-image-2" class="modal-image inactive" src="" alt="Full size image">
+                    <div id="image-loading" class="image-loading">
+                        <div class="spinner"></div>
+                        <p>Loading full image...</p>
+                    </div>
+                </div>
+                
+                <div class="image-controls">
+                    <button id="prev-image" class="btn btn-icon" title="Previous (←)">
+                        <i class="icon">←</i>
+                    </button>
+                    <button id="zoom-fit" class="btn btn-icon" title="Fit to screen (0)">
+                        <i class="icon">⊞</i>
+                    </button>
+                    <button id="zoom-100" class="btn btn-icon" title="100% zoom (1)">
+                        <i class="icon">1:1</i>
+                    </button>
+                    <button id="load-full-res" class="btn btn-icon" title="Load full resolution (F)">
+                        <i class="icon">🔍</i>
+                    </button>
+                    <button id="fullscreen-toggle" class="btn btn-icon" title="Toggle fullscreen (F11)">
+                        <i class="icon">⛶</i>
+                    </button>
+                    <span id="zoom-indicator" class="zoom-indicator">100%</span>
+                    <span id="preload-indicator" class="preload-indicator hidden">📦</span>
+                    <button id="next-image" class="btn btn-icon" title="Next (→)">
+                        <i class="icon">→</i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Status Bar -->
+    <footer class="status-bar">
+        <div class="status-left">
+            <span id="backend-status" class="status-indicator">
+                <span class="status-dot"></span>
+                Backend: Starting...
+            </span>
+        </div>
+        <div class="status-right">
+            <span id="selection-info">Ready</span>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script src="js/app.js"></script>
+    <script src="js/gallery.js"></script>
+    <script src="js/viewer.js"></script>
+    <script src="js/filters.js"></script>
+</body>
+</html>
