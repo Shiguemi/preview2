@@ -184,6 +184,12 @@ class Gallery {
         this.container.style.gridTemplateColumns = 
             `repeat(auto-fill, minmax(${this.thumbnailSize}px, 1fr))`;
         
+        // Update thumbnail container heights
+        const thumbnailContainers = this.container.querySelectorAll('.gallery-item-thumbnail');
+        thumbnailContainers.forEach(container => {
+            container.style.height = `${this.thumbnailSize}px`;
+        });
+        
         // Update existing thumbnails if needed
         const items = this.container.querySelectorAll('.gallery-item img');
         items.forEach(img => {
