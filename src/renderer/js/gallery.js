@@ -7,7 +7,8 @@ class Gallery {
     constructor(app) {
         this.app = app;
         this.container = document.getElementById('gallery');
-        this.thumbnailSize = 200;
+        this.thumbnailSize = 200; // Tamanho atual do display
+        this.maxThumbnailSize = 300; // Tamanho máximo para geração (fixo)
         this.loadingThumbnails = new Set();
         this.thumbnailCache = new Map(); // Cache para thumbnails
         this.maxCacheSize = 100; // Máximo de thumbnails em cache
@@ -33,6 +34,14 @@ class Gallery {
             sizeValue.textContent = `${this.thumbnailSize}px`;
             this.updateThumbnailSize();
         });
+        
+        // Definir valores iniciais
+        if (sizeSlider) {
+            sizeSlider.value = this.thumbnailSize;
+        }
+        if (sizeValue) {
+            sizeValue.textContent = `${this.thumbnailSize}px`;
+        }
     }
 
     setupIntersectionObserver() {
@@ -91,9 +100,11 @@ class Gallery {
         item.dataset.imagePath = image.path;
         item.dataset.imageIndex = index;
         
-        // Create thumbnail container
+        // Create thumbnail container com tamanho inicial
         const thumbnailContainer = document.createElement('div');
         thumbnailContainer.className = 'gallery-item-thumbnail';
+        thumbnailContainer.style.width = `${this.thumbnailSize}px`;
+        thumbnailContainer.style.height = `${this.thumbnailSize}px`;
         
         // Create loading spinner
         const spinner = document.createElement('div');
@@ -145,8 +156,8 @@ class Gallery {
             return;
         }
         
-        // Verificar cache primeiro
-        const cacheKey = `${imagePath}_${this.thumbnailSize}`;
+        // Verificar cache primeiro (sempre usar tamanho máximo para cache)
+        const cacheKey = `${imagePath}_${this.maxThumbnailSize}`;
         if (this.thumbnailCache.has(cacheKey)) {
             this.displayCachedThumbnail(item, cacheKey);
             return;
@@ -202,16 +213,16 @@ class Gallery {
         this.loadingThumbnails.add(imagePath);
         
         try {
-            // Tentar carregar como binário primeiro (mais rápido)
-            const result = await window.electronAPI.getThumbnailBinary(imagePath, this.thumbnailSize);
+            // Sempre carregar no tamanho máximo para otimização
+            const result = await window.electronAPI.getThumbnailBinary(imagePath, this.maxThumbnailSize);
             
             if (result.success && result.binary_data) {
                 // Converter dados binários para Blob e criar URL
                 const blob = new Blob([result.binary_data], { type: 'image/jpeg' });
                 const imageUrl = URL.createObjectURL(blob);
                 
-                // Cache do thumbnail com limite de memória
-                const cacheKey = `${imagePath}_${this.thumbnailSize}`;
+                // Cache do thumbnail com limite de memória (sempre tamanho máximo)
+                const cacheKey = `${imagePath}_${this.maxThumbnailSize}`;
                 this.addToCache(cacheKey, imageUrl);
                 
                 const img = item.querySelector('img');
@@ -231,11 +242,11 @@ class Gallery {
                 
                 img.src = imageUrl;
             } else {
-                // Fallback para Base64 se binário falhar
-                const fallbackResult = await window.electronAPI.getThumbnail(imagePath, this.thumbnailSize);
+                // Fallback para Base64 se binário falhar (sempre tamanho máximo)
+                const fallbackResult = await window.electronAPI.getThumbnail(imagePath, this.maxThumbnailSize);
                 
                 if (fallbackResult.success && fallbackResult.data_url) {
-                    const cacheKey = `${imagePath}_${this.thumbnailSize}`;
+                    const cacheKey = `${imagePath}_${this.maxThumbnailSize}`;
                     this.addToCache(cacheKey, fallbackResult.data_url);
                     
                     const img = item.querySelector('img');
@@ -293,15 +304,15 @@ class Gallery {
             // Carregar todos os thumbnails em paralelo usando dados binários
             const promises = batchItems.map(async ({ item, imagePath }) => {
                 try {
-                    const result = await window.electronAPI.getThumbnailBinary(imagePath, this.thumbnailSize);
+                    const result = await window.electronAPI.getThumbnailBinary(imagePath, this.maxThumbnailSize);
                     
                     if (result.success && result.binary_data) {
                         // Converter dados binários para Blob e criar URL
                         const blob = new Blob([result.binary_data], { type: 'image/jpeg' });
                         const imageUrl = URL.createObjectURL(blob);
                         
-                        // Cache do thumbnail
-                        const cacheKey = `${imagePath}_${this.thumbnailSize}`;
+                        // Cache do thumbnail (sempre tamanho máximo)
+                        const cacheKey = `${imagePath}_${this.maxThumbnailSize}`;
                         this.addToCache(cacheKey, imageUrl);
                         
                         const img = item.querySelector('img');
@@ -366,35 +377,21 @@ class Gallery {
     }
 
     updateThumbnailSize() {
+        // Atualizar grid layout
         this.container.style.gridTemplateColumns = 
             `repeat(auto-fill, minmax(${this.thumbnailSize}px, 1fr))`;
         
-        // Update thumbnail container heights
+        // Atualizar containers de thumbnail via CSS (abordagem simples e confiável)
         const thumbnailContainers = this.container.querySelectorAll('.gallery-item-thumbnail');
         thumbnailContainers.forEach(container => {
+            container.style.width = `${this.thumbnailSize}px`;
             container.style.height = `${this.thumbnailSize}px`;
         });
         
-        // Recarregar thumbnails com novo tamanho (verificar cache primeiro)
-        const items = this.container.querySelectorAll('.gallery-item');
-        items.forEach(item => {
-            const imagePath = item.dataset.imagePath;
-            if (imagePath) {
-                const cacheKey = `${imagePath}_${this.thumbnailSize}`;
-                if (this.thumbnailCache.has(cacheKey)) {
-                    // Usar cache se disponível
-                    this.displayCachedThumbnail(item, cacheKey);
-                } else {
-                    // Recarregar com novo tamanho
-                    const img = item.querySelector('img');
-                    if (img && img.src) {
-                        item.classList.add('loading');
-                        img.style.display = 'none';
-                        this.queueThumbnailLoad(item, imagePath, 'visible');
-                    }
-                }
-            }
-        });
+        // Não recarregar thumbnails! Os thumbnails já estão no tamanho máximo
+        // O CSS object-fit: cover se encarrega de redimensionar adequadamente
+        const thumbnailCount = thumbnailContainers.length;
+        console.log(`📐 Thumbnail size updated to ${this.thumbnailSize}px (CSS resize only, ${thumbnailCount} thumbnails saved from regeneration)`);
     }
 
     formatFileSize(bytes) {

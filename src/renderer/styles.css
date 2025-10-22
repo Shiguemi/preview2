@@ -343,13 +343,15 @@ body {
 
 .gallery-item-thumbnail {
     position: relative;
-    width: 100%;
+    width: 200px;
     height: 200px;
     display: flex;
     align-items: center;
     justify-content: center;
     background: #1a1a1a;
     overflow: hidden;
+    flex-shrink: 0;
+    transition: width 0.2s ease, height 0.2s ease;
 }
 
 .gallery-item img {
@@ -357,6 +359,7 @@ body {
     height: 100%;
     object-fit: cover;
     display: block;
+    transition: none; /* Remover transições para melhor performance */
 }
 
 .gallery-item-info {
