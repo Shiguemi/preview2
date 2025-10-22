@@ -13,6 +13,8 @@ class ImageViewer {
         this.translateX = 0;
         this.translateY = 0;
         this.isDragging = false;
+        this.isFullscreen = false;
+        this.controlsTimeout = null;
         
         this.init();
     }
@@ -35,7 +37,9 @@ class ImageViewer {
             nextBtn: document.getElementById('next-image'),
             zoomFitBtn: document.getElementById('zoom-fit'),
             zoom100Btn: document.getElementById('zoom-100'),
-            loadFullResBtn: document.getElementById('load-full-res')
+            loadFullResBtn: document.getElementById('load-full-res'),
+            fullscreenBtn: document.getElementById('fullscreen-toggle'),
+            zoomIndicator: document.getElementById('zoom-indicator')
         };
     }
 
@@ -50,6 +54,7 @@ class ImageViewer {
         this.elements.zoomFitBtn?.addEventListener('click', () => this.fitToScreen());
         this.elements.zoom100Btn?.addEventListener('click', () => this.zoom100());
         this.elements.loadFullResBtn?.addEventListener('click', () => this.loadFullResolution());
+        this.elements.fullscreenBtn?.addEventListener('click', () => this.toggleFullscreen());
         
         // Keyboard navigation
         document.addEventListener('keydown', (e) => this.handleKeyboard(e));
@@ -75,7 +80,17 @@ class ImageViewer {
         let startX, startY, startTranslateX, startTranslateY;
 
         image.addEventListener('mousedown', (e) => {
-            if (!this.isOpen || this.scale <= 1) return;
+            if (!this.isOpen) return;
+            
+            // Verificar se a imagem é maior que o container (precisa de drag)
+            const container = image.parentElement;
+            const containerRect = container.getBoundingClientRect();
+            const scaledWidth = image.naturalWidth * this.scale;
+            const scaledHeight = image.naturalHeight * this.scale;
+            
+            const needsDrag = scaledWidth > containerRect.width || scaledHeight > containerRect.height;
+            
+            if (!needsDrag) return;
             
             this.isDragging = true;
             startX = e.clientX;
@@ -98,17 +113,28 @@ class ImageViewer {
         document.addEventListener('mouseup', () => {
             if (this.isDragging) {
                 this.isDragging = false;
-                image.style.cursor = this.scale > 1 ? 'grab' : 'default';
+                this.updateCursor();
             }
         });
 
-        // Double-click to toggle zoom
+        // Double-click to toggle between fit-to-screen and 2x zoom
         image.addEventListener('dblclick', (e) => {
             if (!this.isOpen) return;
             
-            if (this.scale === 1) {
+            // Se está em fit-to-screen (escala calculada), fazer zoom 2x
+            // Se está em zoom, voltar para fit-to-screen
+            const container = image.parentElement;
+            const containerRect = container.getBoundingClientRect();
+            const fitScale = Math.min(
+                containerRect.width / image.naturalWidth,
+                containerRect.height / image.naturalHeight
+            );
+            
+            if (Math.abs(this.scale - fitScale) < 0.01) {
+                // Está em fit-to-screen, fazer zoom 2x
                 this.zoomAt(e.clientX, e.clientY, 2);
             } else {
+                // Está em zoom, voltar para fit-to-screen
                 this.fitToScreen();
             }
         });
@@ -143,6 +169,11 @@ class ImageViewer {
         if (!this.isOpen) return;
         
         console.log('❌ Closing image viewer');
+        
+        // Sair do fullscreen se estiver ativo
+        if (this.isFullscreen) {
+            this.exitFullscreen();
+        }
         
         this.isOpen = false;
         this.elements.modal.classList.add('hidden');
@@ -219,6 +250,9 @@ class ImageViewer {
                     
                     // Mostrar indicador se a imagem foi redimensionada
                     this.checkIfResized(maxSize, actualWidth, actualHeight);
+                    
+                    // Garantir que o cursor seja atualizado após o carregamento
+                    setTimeout(() => this.updateCursor(), 100);
                 };
                 
                 this.elements.image.onerror = () => {
@@ -277,29 +311,44 @@ class ImageViewer {
     }
 
     fitToScreen() {
-        this.scale = 1;
-        this.translateX = 0;
-        this.translateY = 0;
-        this.updateImageTransform();
-        this.elements.image.style.cursor = 'default';
-    }
-
-    zoom100() {
-        // Calculate scale to show image at 100% (1:1 pixel ratio)
+        // Calcular escala para a imagem caber completamente na tela
         const image = this.elements.image;
         const container = image.parentElement;
         
         if (image.naturalWidth && image.naturalHeight) {
             const containerRect = container.getBoundingClientRect();
+            
+            // Calcular escalas para largura e altura
             const scaleX = containerRect.width / image.naturalWidth;
             const scaleY = containerRect.height / image.naturalHeight;
             
-            // Use the larger scale to ensure 100% zoom
-            this.scale = Math.max(scaleX, scaleY, 1);
+            // Usar a menor escala para garantir que a imagem caiba completamente
+            this.scale = Math.min(scaleX, scaleY);
             this.translateX = 0;
             this.translateY = 0;
             this.updateImageTransform();
-            this.elements.image.style.cursor = this.scale > 1 ? 'grab' : 'default';
+            this.updateCursor();
+            
+            console.log(`📐 Fit to screen: Scale ${this.scale.toFixed(3)} (${Math.round(this.scale * 100)}%)`);
+        }
+    }
+
+    zoom100() {
+        // Show image at true 100% scale (1:1 pixel ratio)
+        const image = this.elements.image;
+        
+        if (image.naturalWidth && image.naturalHeight) {
+            // Para zoom 1:1, a escala é sempre 1.0
+            // Isso significa 1 pixel da imagem = 1 pixel da tela
+            this.scale = 1.0;
+            this.translateX = 0;
+            this.translateY = 0;
+            this.updateImageTransform();
+            this.updateCursor();
+            
+            const container = image.parentElement;
+            const containerRect = container.getBoundingClientRect();
+            console.log(`🔍 Zoom 100%: Image ${image.naturalWidth}x${image.naturalHeight}, Container ${Math.round(containerRect.width)}x${Math.round(containerRect.height)}`);
         }
     }
 
@@ -322,21 +371,48 @@ class ImageViewer {
             
             this.scale = newScale;
             this.updateImageTransform();
-            
-            this.elements.image.style.cursor = this.scale > 1 ? 'grab' : 'default';
+            this.updateCursor();
         }
     }
 
     updateImageTransform() {
         const transform = `translate(${this.translateX}px, ${this.translateY}px) scale(${this.scale})`;
         this.elements.image.style.transform = transform;
+        this.updateZoomIndicator();
+    }
+    
+    updateZoomIndicator() {
+        if (this.elements.zoomIndicator) {
+            const percentage = Math.round(this.scale * 100);
+            this.elements.zoomIndicator.textContent = `${percentage}%`;
+        }
+    }
+    
+    updateCursor() {
+        const image = this.elements.image;
+        const container = image.parentElement;
+        
+        if (image.naturalWidth && image.naturalHeight && container) {
+            const containerRect = container.getBoundingClientRect();
+            const scaledWidth = image.naturalWidth * this.scale;
+            const scaledHeight = image.naturalHeight * this.scale;
+            
+            const needsDrag = scaledWidth > containerRect.width || scaledHeight > containerRect.height;
+            
+            if (this.isFullscreen) {
+                // No fullscreen, usar classes CSS para controle do cursor
+                image.classList.toggle('draggable', needsDrag);
+            } else {
+                // No modal normal, usar style direto
+                image.style.cursor = needsDrag ? 'grab' : 'default';
+                image.classList.remove('draggable');
+            }
+        }
     }
 
     resetImageTransform() {
-        this.scale = 1;
-        this.translateX = 0;
-        this.translateY = 0;
-        this.updateImageTransform();
+        // Reset para fit-to-screen em vez de scale = 1
+        this.fitToScreen();
     }
 
     handleKeyboard(event) {
@@ -345,7 +421,11 @@ class ImageViewer {
         switch (event.key) {
             case 'Escape':
                 event.preventDefault();
-                this.close();
+                if (this.isFullscreen) {
+                    this.exitFullscreen();
+                } else {
+                    this.close();
+                }
                 break;
             case 'ArrowLeft':
                 event.preventDefault();
@@ -367,6 +447,10 @@ class ImageViewer {
             case 'F':
                 event.preventDefault();
                 this.loadFullResolution();
+                break;
+            case 'F11':
+                event.preventDefault();
+                this.toggleFullscreen();
                 break;
         }
     }
@@ -408,6 +492,9 @@ class ImageViewer {
                     this.showImageLoading(false);
                     this.fitToScreen();
                     console.log(`✅ FULL resolution loaded: ${image.name} (${this.elements.image.naturalWidth}x${this.elements.image.naturalHeight})`);
+                    
+                    // Garantir que o cursor seja atualizado após o carregamento
+                    setTimeout(() => this.updateCursor(), 100);
                 };
                 
                 this.elements.image.onerror = () => {
@@ -428,6 +515,135 @@ class ImageViewer {
             console.error(`❌ Error loading full resolution: ${error.message}`);
             this.showImageLoading(false);
         }
+    }
+
+    toggleFullscreen() {
+        if (this.isFullscreen) {
+            this.exitFullscreen();
+        } else {
+            this.enterFullscreen();
+        }
+    }
+    
+    enterFullscreen() {
+        if (!this.isOpen) return;
+        
+        console.log('🖥️ Entering fullscreen mode');
+        
+        this.isFullscreen = true;
+        this.elements.modal.classList.add('fullscreen');
+        
+        // Atualizar botão
+        if (this.elements.fullscreenBtn) {
+            this.elements.fullscreenBtn.title = 'Exit fullscreen (F11 or Esc)';
+            this.elements.fullscreenBtn.querySelector('.icon').textContent = '⛶';
+            this.elements.fullscreenBtn.style.backgroundColor = '#0066cc';
+            this.elements.fullscreenBtn.style.borderColor = '#0066cc';
+        }
+        
+        // Recalcular fit-to-screen para tela cheia
+        setTimeout(() => {
+            this.fitToScreen();
+            this.setupFullscreenControls();
+            this.showFullscreenHint();
+        }, 100);
+    }
+    
+    exitFullscreen() {
+        if (!this.isFullscreen) return;
+        
+        console.log('🖥️ Exiting fullscreen mode');
+        
+        this.isFullscreen = false;
+        this.elements.modal.classList.remove('fullscreen');
+        
+        // Atualizar botão
+        if (this.elements.fullscreenBtn) {
+            this.elements.fullscreenBtn.title = 'Toggle fullscreen (F11)';
+            this.elements.fullscreenBtn.querySelector('.icon').textContent = '⛶';
+            this.elements.fullscreenBtn.style.backgroundColor = '';
+            this.elements.fullscreenBtn.style.borderColor = '';
+        }
+        
+        // Limpar timeout dos controles
+        if (this.controlsTimeout) {
+            clearTimeout(this.controlsTimeout);
+            this.controlsTimeout = null;
+        }
+        
+        // Recalcular fit-to-screen para modal normal
+        setTimeout(() => {
+            this.fitToScreen();
+        }, 100);
+    }
+    
+    setupFullscreenControls() {
+        if (!this.isFullscreen) return;
+        
+        const controls = this.elements.modal.querySelector('.image-controls');
+        if (!controls) return;
+        
+        // Mostrar controles inicialmente
+        controls.classList.add('show');
+        
+        // Auto-hide após 3 segundos
+        this.controlsTimeout = setTimeout(() => {
+            controls.classList.remove('show');
+        }, 3000);
+        
+        // Mostrar controles ao mover o mouse
+        const showControls = () => {
+            controls.classList.add('show');
+            
+            if (this.controlsTimeout) {
+                clearTimeout(this.controlsTimeout);
+            }
+            
+            this.controlsTimeout = setTimeout(() => {
+                controls.classList.remove('show');
+            }, 3000);
+        };
+        
+        // Event listeners para mostrar controles
+        this.elements.modal.addEventListener('mousemove', showControls);
+        this.elements.modal.addEventListener('click', showControls);
+        
+        // Listener para redimensionamento da janela
+        window.addEventListener('resize', () => {
+            if (this.isFullscreen) {
+                setTimeout(() => this.fitToScreen(), 100);
+            }
+        });
+    }
+    
+    showFullscreenHint() {
+        // Criar elemento de dica temporário
+        const hint = document.createElement('div');
+        hint.style.cssText = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 16px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 1000;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        `;
+        hint.textContent = 'Press ESC or F11 to exit fullscreen';
+        
+        document.body.appendChild(hint);
+        
+        // Mostrar e esconder a dica
+        setTimeout(() => hint.style.opacity = '1', 100);
+        setTimeout(() => {
+            hint.style.opacity = '0';
+            setTimeout(() => document.body.removeChild(hint), 300);
+        }, 2000);
     }
 
     formatFileSize(bytes) {
