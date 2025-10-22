@@ -340,6 +340,33 @@ ipcMain.handle('get-image-info', async (event, imagePath) => {
   }
 });
 
+ipcMain.handle('get-batch-thumbnails-parallel', async (event, imagePaths, size = 200) => {
+  try {
+    const response = await backendRequest('/batch-thumbnails-parallel', {
+      method: 'POST',
+      body: JSON.stringify({
+        image_paths: imagePaths,
+        size: size
+      })
+    });
+    
+    return response;
+  } catch (error) {
+    console.error('Parallel batch thumbnail generation failed:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('get-performance-stats', async () => {
+  try {
+    const response = await backendRequest('/performance-stats');
+    return response;
+  } catch (error) {
+    console.error('Performance stats failed:', error);
+    throw error;
+  }
+});
+
 ipcMain.handle('get-batch-thumbnails', async (event, imagePaths, size = 200) => {
   try {
     const response = await backendRequest('/batch-thumbnails', {

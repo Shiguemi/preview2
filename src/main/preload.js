@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getThumbnail: (imagePath, size) => ipcRenderer.invoke('get-thumbnail', imagePath, size),
   getThumbnailBinary: (imagePath, size) => ipcRenderer.invoke('get-thumbnail-binary', imagePath, size),
   getBatchThumbnails: (imagePaths, size) => ipcRenderer.invoke('get-batch-thumbnails', imagePaths, size),
+  getBatchThumbnailsParallel: (imagePaths, size) => ipcRenderer.invoke('get-batch-thumbnails-parallel', imagePaths, size),
+  getPerformanceStats: () => ipcRenderer.invoke('get-performance-stats'),
   getImageInfo: (imagePath) => ipcRenderer.invoke('get-image-info', imagePath),
   getFullImage: (imagePath, maxSize) => ipcRenderer.invoke('get-full-image', imagePath, maxSize),
   
