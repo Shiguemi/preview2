@@ -54,6 +54,51 @@ class ImageViewer {
         console.log(`🔄 Swapped to image ${this.activeImageIndex}`);
     }
     
+    showThumbnailPlaceholder(imagePath) {
+        // Mostrar thumbnail como placeholder enquanto full-res carrega
+        const gallery = this.app.gallery;
+        if (gallery && gallery.thumbnailCache) {
+            // Procurar thumbnail no cache da galeria usando o tamanho máximo
+            const maxThumbnailSize = gallery.maxThumbnailSize || 300;
+            const cacheKey = `${imagePath}_${maxThumbnailSize}`;
+            
+            if (gallery.thumbnailCache.has(cacheKey)) {
+                const thumbnailUrl = gallery.thumbnailCache.get(cacheKey);
+                console.log(`📷 Using thumbnail placeholder for ${imagePath}`);
+                
+                this.elements.thumbnail.onload = () => {
+                    // Calcular escala para o thumbnail
+                    requestAnimationFrame(() => {
+                        const thumbnailScale = this.calculateFitToScreenScale(this.elements.thumbnail);
+                        const transform = `translate(-50%, -50%) scale(${thumbnailScale})`;
+                        this.elements.thumbnail.style.transform = transform;
+                        
+                        // Mostrar thumbnail
+                        this.elements.thumbnail.classList.add('visible');
+                        this.elements.thumbnail.classList.remove('hidden');
+                    });
+                };
+                
+                this.elements.thumbnail.src = thumbnailUrl;
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    hideThumbnailPlaceholder() {
+        // Esconder thumbnail placeholder
+        this.elements.thumbnail.classList.remove('visible');
+        this.elements.thumbnail.classList.add('hidden');
+        
+        // Limpar src após transição
+        setTimeout(() => {
+            if (this.elements.thumbnail.classList.contains('hidden')) {
+                this.elements.thumbnail.src = '';
+            }
+        }, 200);
+    }
+    
     getCurrentImage() {
         return this.currentImage;
     }
@@ -71,20 +116,7 @@ class ImageViewer {
         const transform = `translate(${centerX}%, ${centerY}%) translate3d(${this.translateX}px, ${this.translateY}px, 0) scale(${this.scale})`;
         targetImage.style.transform = transform;
         
-        console.log(`🔧 Applied transform: scale(${this.scale.toFixed(3)}) translate(${this.translateX}, ${this.translateY})`);
-    }
-    
-    // Método de debug para testar fit-to-screen
-    debugFitToScreen(targetImage) {
-        const container = targetImage.parentElement;
-        const containerRect = container.getBoundingClientRect();
-        
-        console.log(`🔍 Debug Fit-to-Screen:`);
-        console.log(`  Image natural: ${targetImage.naturalWidth}x${targetImage.naturalHeight}`);
-        console.log(`  Container: ${containerRect.width}x${containerRect.height}`);
-        console.log(`  Scale X: ${(containerRect.width / targetImage.naturalWidth).toFixed(3)}`);
-        console.log(`  Scale Y: ${(containerRect.height / targetImage.naturalHeight).toFixed(3)}`);
-        console.log(`  Final scale: ${Math.min(containerRect.width / targetImage.naturalWidth, containerRect.height / targetImage.naturalHeight).toFixed(3)}`);
+        // Log removido para produção
     }
     
     calculateFitToScreenScale(targetImage) {
@@ -115,6 +147,7 @@ class ImageViewer {
         this.elements = {
             modal: document.getElementById('image-viewer'),
             backdrop: this.modal?.querySelector('.modal-backdrop'),
+            thumbnail: document.getElementById('modal-thumbnail'),
             image1: document.getElementById('modal-image-1'),
             image2: document.getElementById('modal-image-2'),
             imageName: document.getElementById('modal-image-name'),
@@ -326,6 +359,8 @@ class ImageViewer {
         this.resetImageTransform();
         this.elements.image1.src = '';
         this.elements.image2.src = '';
+        this.elements.thumbnail.src = '';
+        this.hideThumbnailPlaceholder();
 
         // Limpar cache de preload para liberar memória
         this.clearPreloadCache();
@@ -370,6 +405,9 @@ class ImageViewer {
             if (this.preloadCache.has(cacheKey)) {
                 console.log(`⚡ Loading from cache: ${image.name}`);
                 const cachedData = this.preloadCache.get(cacheKey);
+                
+                // Esconder thumbnail placeholder se estiver visível
+                this.hideThumbnailPlaceholder();
 
                 // Carregar na imagem inativa (double-buffering)
                 const targetImage = this.getNextImage();
@@ -382,8 +420,8 @@ class ImageViewer {
 
                     // Aguardar um frame para garantir que naturalWidth/Height estejam disponíveis
                     requestAnimationFrame(() => {
-                        // Debug fit-to-screen
-                        this.debugFitToScreen(targetImage);
+                        // Esconder thumbnail placeholder (cache hit não precisa)
+                        this.hideThumbnailPlaceholder();
                         
                         // Calcular e aplicar fit-to-screen na nova imagem
                         this.scale = this.calculateFitToScreenScale(targetImage);
@@ -409,6 +447,13 @@ class ImageViewer {
             }
 
             console.log(`🔄 Loading full image: ${image.path}`);
+
+            // Mostrar thumbnail como placeholder enquanto carrega
+            const thumbnailShown = this.showThumbnailPlaceholder(image.path);
+            if (!thumbnailShown) {
+                // Se não há thumbnail, mostrar loading normal
+                this.showImageLoading(true);
+            }
 
             const maxSize = this.getCurrentMaxSize();
             console.log(`📐 Max size: ${maxSize === 0 ? 'unlimited' : maxSize}`);
@@ -436,6 +481,9 @@ class ImageViewer {
                     
                     // Aguardar um frame para garantir que naturalWidth/Height estejam disponíveis
                     requestAnimationFrame(() => {
+                        // Esconder thumbnail placeholder
+                        this.hideThumbnailPlaceholder();
+                        
                         // Calcular e aplicar fit-to-screen na nova imagem
                         this.scale = this.calculateFitToScreenScale(targetImage);
                         this.translateX = 0;
@@ -738,6 +786,9 @@ class ImageViewer {
                     
                     // Aguardar um frame para garantir que naturalWidth/Height estejam disponíveis
                     requestAnimationFrame(() => {
+                        // Esconder thumbnail placeholder
+                        this.hideThumbnailPlaceholder();
+                        
                         // Calcular e aplicar fit-to-screen na nova imagem
                         this.scale = this.calculateFitToScreenScale(targetImage);
                         this.translateX = 0;

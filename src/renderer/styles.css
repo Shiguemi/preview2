@@ -478,6 +478,32 @@ body {
     z-index: 1;
 }
 
+.modal-thumbnail {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    max-width: none;
+    max-height: none;
+    width: auto;
+    height: auto;
+    transform-origin: center center;
+    will-change: transform;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+    z-index: 0;
+    opacity: 0;
+    filter: blur(1px);
+    transition: opacity 0.2s ease;
+}
+
+.modal-thumbnail.visible {
+    opacity: 1;
+}
+
+.modal-thumbnail.hidden {
+    opacity: 0;
+}
+
 /* Legacy support for single image ID */
 #modal-image {
     max-width: none;
