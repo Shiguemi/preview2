@@ -15,6 +15,8 @@ class ImageViewer {
         this.isDragging = false;
         this.isFullscreen = false;
         this.controlsTimeout = null;
+        this.dragAnimationFrame = null;
+        this.lastDragTime = 0;
         
         this.init();
     }
@@ -98,22 +100,61 @@ class ImageViewer {
             startTranslateX = this.translateX;
             startTranslateY = this.translateY;
             
+            // Desabilitar transições durante o drag para melhor performance
+            image.style.transition = 'none';
             image.style.cursor = 'grabbing';
+            
+            // Desabilitar pointer events no zoom indicator durante drag
+            if (this.elements.zoomIndicator) {
+                this.elements.zoomIndicator.style.pointerEvents = 'none';
+            }
+            
             e.preventDefault();
         });
 
         document.addEventListener('mousemove', (e) => {
             if (!this.isDragging) return;
             
-            this.translateX = startTranslateX + (e.clientX - startX);
-            this.translateY = startTranslateY + (e.clientY - startY);
-            this.updateImageTransform();
+            // Throttling inteligente - máximo 60fps
+            const now = performance.now();
+            if (now - this.lastDragTime < 16) return; // ~60fps
+            this.lastDragTime = now;
+            
+            // Cancelar frame anterior se ainda não foi executado
+            if (this.dragAnimationFrame) {
+                cancelAnimationFrame(this.dragAnimationFrame);
+            }
+            
+            // Usar requestAnimationFrame para suavizar o movimento
+            this.dragAnimationFrame = requestAnimationFrame(() => {
+                this.translateX = startTranslateX + (e.clientX - startX);
+                this.translateY = startTranslateY + (e.clientY - startY);
+                this.updateImageTransformFast();
+                this.dragAnimationFrame = null;
+            });
         });
 
         document.addEventListener('mouseup', () => {
             if (this.isDragging) {
                 this.isDragging = false;
+                
+                // Cancelar qualquer animationFrame pendente
+                if (this.dragAnimationFrame) {
+                    cancelAnimationFrame(this.dragAnimationFrame);
+                    this.dragAnimationFrame = null;
+                }
+                
+                // Reabilitar transições
+                image.style.transition = '';
+                
+                // Reabilitar pointer events no zoom indicator
+                if (this.elements.zoomIndicator) {
+                    this.elements.zoomIndicator.style.pointerEvents = '';
+                }
+                
+                // Atualizar cursor e zoom indicator
                 this.updateCursor();
+                this.updateZoomIndicator();
             }
         });
 
@@ -376,9 +417,16 @@ class ImageViewer {
     }
 
     updateImageTransform() {
-        const transform = `translate(${this.translateX}px, ${this.translateY}px) scale(${this.scale})`;
+        // Usar translate3d para forçar aceleração de hardware
+        const transform = `translate3d(${this.translateX}px, ${this.translateY}px, 0) scale(${this.scale})`;
         this.elements.image.style.transform = transform;
         this.updateZoomIndicator();
+    }
+    
+    updateImageTransformFast() {
+        // Versão otimizada para drag - sem atualizar zoom indicator
+        const transform = `translate3d(${this.translateX}px, ${this.translateY}px, 0) scale(${this.scale})`;
+        this.elements.image.style.transform = transform;
     }
     
     updateZoomIndicator() {
@@ -614,6 +662,9 @@ class ImageViewer {
                 setTimeout(() => this.fitToScreen(), 100);
             }
         });
+        
+        // Adicionar suporte a touch para melhor responsividade
+        this.setupTouchEvents();
     }
     
     showFullscreenHint() {
@@ -644,6 +695,84 @@ class ImageViewer {
             hint.style.opacity = '0';
             setTimeout(() => document.body.removeChild(hint), 300);
         }, 2000);
+    }
+    
+    setupTouchEvents() {
+        const image = this.elements.image;
+        if (!image) return;
+
+        let startTouchX, startTouchY, startTranslateX, startTranslateY;
+        let isTouchDragging = false;
+
+        // Touch start
+        image.addEventListener('touchstart', (e) => {
+            if (!this.isOpen || e.touches.length !== 1) return;
+            
+            const touch = e.touches[0];
+            const container = image.parentElement;
+            const containerRect = container.getBoundingClientRect();
+            const scaledWidth = image.naturalWidth * this.scale;
+            const scaledHeight = image.naturalHeight * this.scale;
+            
+            const needsDrag = scaledWidth > containerRect.width || scaledHeight > containerRect.height;
+            if (!needsDrag) return;
+            
+            isTouchDragging = true;
+            startTouchX = touch.clientX;
+            startTouchY = touch.clientY;
+            startTranslateX = this.translateX;
+            startTranslateY = this.translateY;
+            
+            // Desabilitar transições durante o drag
+            image.style.transition = 'none';
+            e.preventDefault();
+        }, { passive: false });
+
+        // Touch move
+        image.addEventListener('touchmove', (e) => {
+            if (!isTouchDragging || e.touches.length !== 1) return;
+            
+            const touch = e.touches[0];
+            
+            // Throttling inteligente - máximo 60fps
+            const now = performance.now();
+            if (now - this.lastDragTime < 16) return; // ~60fps
+            this.lastDragTime = now;
+            
+            // Cancelar frame anterior se ainda não foi executado
+            if (this.dragAnimationFrame) {
+                cancelAnimationFrame(this.dragAnimationFrame);
+            }
+            
+            // Usar requestAnimationFrame para suavizar o movimento
+            this.dragAnimationFrame = requestAnimationFrame(() => {
+                this.translateX = startTranslateX + (touch.clientX - startTouchX);
+                this.translateY = startTranslateY + (touch.clientY - startTouchY);
+                this.updateImageTransformFast();
+                this.dragAnimationFrame = null;
+            });
+            
+            e.preventDefault();
+        }, { passive: false });
+
+        // Touch end
+        image.addEventListener('touchend', (e) => {
+            if (isTouchDragging) {
+                isTouchDragging = false;
+                
+                // Cancelar qualquer animationFrame pendente
+                if (this.dragAnimationFrame) {
+                    cancelAnimationFrame(this.dragAnimationFrame);
+                    this.dragAnimationFrame = null;
+                }
+                
+                // Reabilitar transições
+                image.style.transition = '';
+                
+                // Atualizar zoom indicator
+                this.updateZoomIndicator();
+            }
+        });
     }
 
     formatFileSize(bytes) {

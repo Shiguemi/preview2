@@ -462,6 +462,9 @@ body {
     object-fit: contain;
     transition: transform 0.3s ease;
     transform-origin: center center;
+    will-change: transform;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
 }
 
 #modal-image:active {
