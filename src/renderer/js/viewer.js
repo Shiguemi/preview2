@@ -308,221 +308,194 @@ class ImageViewer {
                 // Está em zoom, voltar para fit-to-screen
                 this.fitToScreen();
             }
+
+            // Atualizar cursor e zoom indicator
+            this.updateCursor();
+            this.updateZoomIndicator();
         });
     }
 
-    async open(index) {
-        this.images = this.app.getCurrentImages();
+async open(index, options = {}) {
+    const { fullscreen = false } = options;
+    this.images = this.app.getCurrentImages();
 
-        if (index < 0 || index >= this.images.length) {
-            console.error('❌ Invalid image index:', index);
+    if (index < 0 || index >= this.images.length) {
+        console.error('❌ Invalid image index:', index);
+        return;
+    }
+
+    this.currentIndex = index;
+    this.isOpen = true;
+
+    console.log(`🖼️ Opening image viewer: ${this.images[index].name}`);
+
+    // Show modal
+    this.elements.modal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+
+    // Enter fullscreen immediately if requested
+    if (fullscreen) {
+        this.enterFullscreen();
+    }
+
+    // Reset transformations
+    this.scale = 1;
+    this.translateX = 0;
+    this.translateY = 0;
+
+    // Update UI
+    this.updateImageInfo();
+    this.showImageLoading(true);
+
+    // Load full image
+    await this.loadCurrentImage();
+}
+
+close() {
+    if (!this.isOpen) return;
+
+    console.log('❌ Closing image viewer');
+
+    // Sair do fullscreen se estiver ativo
+    if (this.isFullscreen) {
+        this.exitFullscreen();
+    }
+
+    this.isOpen = false;
+    this.elements.modal.classList.add('hidden');
+    document.body.style.overflow = '';
+
+    // Reset image state
+    this.resetImageTransform();
+    this.elements.image1.src = '';
+    this.elements.image2.src = '';
+    this.elements.thumbnail.src = '';
+    this.hideThumbnailPlaceholder();
+
+    // Limpar cache de preload para liberar memória
+    this.clearPreloadCache();
+}
+
+async previous() {
+    if (!this.isOpen || this.images.length === 0) return;
+
+    this.lastNavigationDirection = -1; // Navegando para trás
+    this.currentIndex = (this.currentIndex - 1 + this.images.length) % this.images.length;
+    console.log(`⬅️ Previous image: ${this.images[this.currentIndex].name}`);
+
+    this.updateImageInfo();
+    this.showImageLoading(true);
+    this.resetImageTransform();
+
+    await this.loadCurrentImage();
+}
+
+async next() {
+    if (!this.isOpen || this.images.length === 0) return;
+
+    this.lastNavigationDirection = 1; // Navegando para frente
+    this.currentIndex = (this.currentIndex + 1) % this.images.length;
+    console.log(`➡️ Next image: ${this.images[this.currentIndex].name}`);
+
+    this.updateImageInfo();
+    this.showImageLoading(true);
+    this.resetImageTransform();
+
+    await this.loadCurrentImage();
+}
+
+async loadCurrentImage() {
+    if (!this.isOpen || this.currentIndex < 0) return;
+
+    const image = this.images[this.currentIndex];
+    const maxSize = this.getCurrentMaxSize();
+    const cacheKey = `${image.path}_${maxSize}`;
+
+    try {
+        // Cache first
+        if (this.preloadCache.has(cacheKey)) {
+            console.log(`⚡ Loading from cache: ${image.name}`);
+            const cachedData = this.preloadCache.get(cacheKey);
+
+            this.hideThumbnailPlaceholder();
+
+            const targetImage = this.getNextImage();
+            targetImage.onload = () => {
+                this.showImageLoading(false);
+                targetImage.style.transition = 'none';
+                requestAnimationFrame(() => {
+                    this.hideThumbnailPlaceholder();
+                    this.scale = this.calculateFitToScreenScale(targetImage);
+                    this.translateX = 0;
+                    this.translateY = 0;
+                    this.applyTransformToImage(targetImage);
+                    this.swapImages();
+                    console.log(`✅ Cached image displayed: ${image.name} (scale: ${this.scale.toFixed(3)})`);
+                    this.checkIfResized(cachedData.maxSize, cachedData.width, cachedData.height);
+                    this.updateCursor();
+                    this.startPreloading();
+                });
+            };
+            targetImage.src = cachedData.data_url;
+            await this.updateImageDetails();
             return;
         }
 
-        this.currentIndex = index;
-        this.isOpen = true;
+        console.log(`🔄 Loading full image: ${image.path}`);
 
-        console.log(`🖼️ Opening image viewer: ${this.images[index].name}`);
-
-        // Show modal
-        this.elements.modal.classList.remove('hidden');
-        document.body.style.overflow = 'hidden';
-
-        // Reset transformations
-        this.scale = 1;
-        this.translateX = 0;
-        this.translateY = 0;
-
-        // Update UI
-        this.updateImageInfo();
-        this.showImageLoading(true);
-
-        // Load full image
-        await this.loadCurrentImage();
-    }
-
-    close() {
-        if (!this.isOpen) return;
-
-        console.log('❌ Closing image viewer');
-
-        // Sair do fullscreen se estiver ativo
-        if (this.isFullscreen) {
-            this.exitFullscreen();
+        // Show thumbnail placeholder while loading
+        const thumbnailShown = this.showThumbnailPlaceholder(image.path);
+        if (!thumbnailShown) {
+            this.showImageLoading(true);
         }
 
-        this.isOpen = false;
-        this.elements.modal.classList.add('hidden');
-        document.body.style.overflow = '';
+        console.log(`📐 Max size: ${maxSize === 0 ? 'unlimited' : maxSize}`);
+        const result = await window.electronAPI.getFullImage(image.path, maxSize);
 
-        // Reset image state
-        this.resetImageTransform();
-        this.elements.image1.src = '';
-        this.elements.image2.src = '';
-        this.elements.thumbnail.src = '';
-        this.hideThumbnailPlaceholder();
+        if (result.success && result.data_url) {
+            // Add to cache
+            this.addToPreloadCache(cacheKey, {
+                data_url: result.data_url,
+                width: result.width || 0,
+                height: result.height || 0,
+                maxSize: maxSize,
+                timestamp: Date.now()
+            });
 
-        // Limpar cache de preload para liberar memória
-        this.clearPreloadCache();
-    }
-
-    async previous() {
-        if (!this.isOpen || this.images.length === 0) return;
-
-        this.lastNavigationDirection = -1; // Navegando para trás
-        this.currentIndex = (this.currentIndex - 1 + this.images.length) % this.images.length;
-        console.log(`⬅️ Previous image: ${this.images[this.currentIndex].name}`);
-
-        this.updateImageInfo();
-        this.showImageLoading(true);
-        this.resetImageTransform();
-
-        await this.loadCurrentImage();
-    }
-
-    async next() {
-        if (!this.isOpen || this.images.length === 0) return;
-
-        this.lastNavigationDirection = 1; // Navegando para frente
-        this.currentIndex = (this.currentIndex + 1) % this.images.length;
-        console.log(`➡️ Next image: ${this.images[this.currentIndex].name}`);
-
-        this.updateImageInfo();
-        this.showImageLoading(true);
-        this.resetImageTransform();
-
-        await this.loadCurrentImage();
-    }
-
-    async loadCurrentImage() {
-        if (!this.isOpen || this.currentIndex < 0) return;
-
-        const image = this.images[this.currentIndex];
-        const cacheKey = `${image.path}_${this.getCurrentMaxSize()}`;
-
-        try {
-            // Verificar cache primeiro
-            if (this.preloadCache.has(cacheKey)) {
-                console.log(`⚡ Loading from cache: ${image.name}`);
-                const cachedData = this.preloadCache.get(cacheKey);
-                
-                // Esconder thumbnail placeholder se estiver visível
-                this.hideThumbnailPlaceholder();
-
-                // Carregar na imagem inativa (double-buffering)
-                const targetImage = this.getNextImage();
-                
-                targetImage.onload = () => {
-                    this.showImageLoading(false);
-
-                    // Desabilitar transições para navegação instantânea
-                    targetImage.style.transition = 'none';
-
-                    // Aguardar um frame para garantir que naturalWidth/Height estejam disponíveis
-                    requestAnimationFrame(() => {
-                        // Esconder thumbnail placeholder (cache hit não precisa)
-                        this.hideThumbnailPlaceholder();
-                        
-                        // Calcular e aplicar fit-to-screen na nova imagem
-                        this.scale = this.calculateFitToScreenScale(targetImage);
-                        this.translateX = 0;
-                        this.translateY = 0;
-                        this.applyTransformToImage(targetImage);
-                        
-                        // Trocar imagens instantaneamente (sem flickering)
-                        this.swapImages();
-
-                        console.log(`✅ Cached image displayed: ${image.name} (scale: ${this.scale.toFixed(3)})`);
-                        this.checkIfResized(cachedData.maxSize, cachedData.width, cachedData.height);
-                        this.updateCursor();
-
-                        // Iniciar preloading das imagens adjacentes
-                        this.startPreloading();
-                    });
-                };
-
-                targetImage.src = cachedData.data_url;
-                await this.updateImageDetails();
-                return;
-            }
-
-            console.log(`🔄 Loading full image: ${image.path}`);
-
-            // Mostrar thumbnail como placeholder enquanto carrega
-            const thumbnailShown = this.showThumbnailPlaceholder(image.path);
-            if (!thumbnailShown) {
-                // Se não há thumbnail, mostrar loading normal
-                this.showImageLoading(true);
-            }
-
-            const maxSize = this.getCurrentMaxSize();
-            console.log(`📐 Max size: ${maxSize === 0 ? 'unlimited' : maxSize}`);
-
-            const result = await window.electronAPI.getFullImage(image.path, maxSize);
-
-            if (result.success && result.data_url) {
-                // Adicionar ao cache
-                this.addToPreloadCache(cacheKey, {
-                    data_url: result.data_url,
-                    width: result.width || 0,
-                    height: result.height || 0,
-                    maxSize: maxSize,
-                    timestamp: Date.now()
+            const targetImage = this.getNextImage();
+            targetImage.onload = () => {
+                this.showImageLoading(false);
+                targetImage.style.transition = 'none';
+                requestAnimationFrame(() => {
+                    this.hideThumbnailPlaceholder();
+                    this.scale = this.calculateFitToScreenScale(targetImage);
+                    this.translateX = 0;
+                    this.translateY = 0;
+                    this.applyTransformToImage(targetImage);
+                    this.swapImages();
+                    const actualWidth = targetImage.naturalWidth;
+                    const actualHeight = targetImage.naturalHeight;
+                    console.log(`✅ Image loaded: ${image.name} (${actualWidth}x${actualHeight}, scale: ${this.scale.toFixed(3)})`);
+                    this.checkIfResized(maxSize, actualWidth, actualHeight);
+                    this.updateCursor();
+                    this.startPreloading();
                 });
-
-                // Carregar na imagem inativa (double-buffering)
-                const targetImage = this.getNextImage();
-                
-                targetImage.onload = () => {
-                    this.showImageLoading(false);
-
-                    // Desabilitar transições para navegação instantânea
-                    targetImage.style.transition = 'none';
-                    
-                    // Aguardar um frame para garantir que naturalWidth/Height estejam disponíveis
-                    requestAnimationFrame(() => {
-                        // Esconder thumbnail placeholder
-                        this.hideThumbnailPlaceholder();
-                        
-                        // Calcular e aplicar fit-to-screen na nova imagem
-                        this.scale = this.calculateFitToScreenScale(targetImage);
-                        this.translateX = 0;
-                        this.translateY = 0;
-                        this.applyTransformToImage(targetImage);
-                        
-                        // Trocar imagens instantaneamente (sem flickering)
-                        this.swapImages();
-
-                        const actualWidth = targetImage.naturalWidth;
-                        const actualHeight = targetImage.naturalHeight;
-
-                        console.log(`✅ Image loaded: ${image.name} (${actualWidth}x${actualHeight}, scale: ${this.scale.toFixed(3)})`);
-
-                        this.checkIfResized(maxSize, actualWidth, actualHeight);
-                        this.updateCursor();
-
-                        // Iniciar preloading das imagens adjacentes
-                        this.startPreloading();
-                    });
-                };
-
-                targetImage.onerror = () => {
-                    this.showImageLoading(false);
-                    console.error(`❌ Failed to display image: ${image.name}`);
-                };
-
-                targetImage.src = result.data_url;
-                await this.updateImageDetails();
-
-            } else {
-                throw new Error(result.error || 'Failed to load image');
-            }
-
-        } catch (error) {
-            console.error(`❌ Error loading image: ${error.message}`);
-            this.showImageLoading(false);
+            };
+            targetImage.onerror = () => {
+                this.showImageLoading(false);
+                console.error(`❌ Failed to display image: ${image.name}`);
+            };
+            targetImage.src = result.data_url;
+            await this.updateImageDetails();
+        } else {
+            throw new Error(result.error || 'Failed to load image');
         }
+
+    } catch (error) {
+        console.error(`❌ Error loading image: ${error.message}`);
+        this.showImageLoading(false);
     }
+}
 
     getCurrentMaxSize() {
         // Estratégia inteligente de carregamento baseada na tela
@@ -708,8 +681,9 @@ class ImageViewer {
         switch (event.key) {
             case 'Escape':
                 event.preventDefault();
+                // Always return to thumbnails if ESC is pressed during fullscreen
                 if (this.isFullscreen) {
-                    this.exitFullscreen();
+                    this.close();
                 } else {
                     this.close();
                 }
@@ -737,7 +711,12 @@ class ImageViewer {
                 break;
             case 'F11':
                 event.preventDefault();
-                this.toggleFullscreen();
+                // If currently in fullscreen, close viewer to return to thumbnails
+                if (this.isFullscreen) {
+                    this.close();
+                } else {
+                    this.enterFullscreen();
+                }
                 break;
         }
     }

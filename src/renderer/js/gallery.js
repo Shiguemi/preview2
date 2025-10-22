@@ -140,10 +140,10 @@ class Gallery {
         info.appendChild(details);
         item.appendChild(info);
         
-        // Add click handler
+        // Add click handler (open directly in fullscreen)
         item.addEventListener('click', () => {
             if (this.app.viewer) {
-                this.app.viewer.open(index);
+                this.app.viewer.open(index, { fullscreen: true });
             }
         });
         
