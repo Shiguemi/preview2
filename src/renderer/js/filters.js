@@ -13,6 +13,7 @@ class Filters {
             other: true
         };
         this.sortBy = 'name';
+        this.filenameFilter = '';
         
         this.init();
     }
@@ -20,6 +21,7 @@ class Filters {
     init() {
         this.setupFilterControls();
         this.setupSortControl();
+        this.setupFilenameFilter();
     }
 
     setupFilterControls() {
@@ -53,8 +55,27 @@ class Filters {
         }
     }
 
+    setupFilenameFilter() {
+        const filterInput = document.getElementById('filename-filter');
+        if (filterInput) {
+            // Use input event for real-time filtering as user types
+            filterInput.addEventListener('input', (e) => {
+                this.filenameFilter = e.target.value.trim().toLowerCase();
+                this.applyFilters();
+                console.log(`🔎 Filtering by name: ${this.filenameFilter || 'none'}`);
+            });
+        }
+    }
+
     apply(images) {
         let filtered = [...images];
+
+        // Apply filename filter if set
+        if (this.filenameFilter) {
+            filtered = filtered.filter(image => 
+                image.name.toLowerCase().includes(this.filenameFilter)
+            );
+        }
 
         // Apply type filters
         filtered = filtered.filter(image => {
@@ -106,6 +127,7 @@ class Filters {
             other: true
         };
         this.sortBy = 'name';
+        this.filenameFilter = '';
         
         // Update UI
         document.getElementById('show-jpg').checked = true;
@@ -113,6 +135,7 @@ class Filters {
         document.getElementById('show-exr').checked = true;
         document.getElementById('show-other').checked = true;
         document.getElementById('sort-by').value = 'name';
+        document.getElementById('filename-filter').value = '';
         
         this.applyFilters();
     }
