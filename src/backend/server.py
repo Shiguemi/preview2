@@ -55,6 +55,10 @@ class ThumbnailRequest(BaseModel):
     image_path: str
     size: int = 200
 
+class BatchThumbnailRequest(BaseModel):
+    image_paths: List[str]
+    size: int = 200
+
 class ImageInfoRequest(BaseModel):
     image_path: str
 
@@ -81,6 +85,12 @@ class ThumbnailResult(BaseModel):
     data_url: Optional[str] = None
     width: Optional[int] = None
     height: Optional[int] = None
+    error: Optional[str] = None
+
+class BatchThumbnailResult(BaseModel):
+    success: bool
+    thumbnails: Dict[str, ThumbnailResult]
+    total_processed: int
     error: Optional[str] = None
 
 class ImageInfoResult(BaseModel):
@@ -362,6 +372,85 @@ async def get_image_info(request: ImageInfoRequest):
     except Exception as e:
         return ImageInfoResult(
             success=False,
+            error=str(e)
+        )
+
+@app.post("/batch-thumbnails", response_model=BatchThumbnailResult)
+async def generate_batch_thumbnails(request: BatchThumbnailRequest):
+    """Generate multiple thumbnails in batch for better performance"""
+    try:
+        thumbnails = {}
+        processed_count = 0
+        
+        for image_path in request.image_paths:
+            try:
+                if not os.path.exists(image_path):
+                    thumbnails[image_path] = ThumbnailResult(
+                        success=False,
+                        error="Image file not found"
+                    )
+                    continue
+                
+                # Try OpenCV first (better for EXR)
+                img_array = load_image_opencv(image_path)
+                
+                if img_array is not None:
+                    # Create thumbnail from numpy array
+                    thumbnail = create_thumbnail(img_array, request.size)
+                    data_url = image_to_data_url(thumbnail, quality=85)  # Slightly lower quality for speed
+                    
+                    thumbnails[image_path] = ThumbnailResult(
+                        success=True,
+                        data_url=data_url,
+                        width=thumbnail.width,
+                        height=thumbnail.height
+                    )
+                    processed_count += 1
+                    continue
+                
+                # Fallback to PIL
+                pil_img = load_image_pil(image_path)
+                if pil_img is not None:
+                    pil_img.thumbnail((request.size, request.size), Image.Resampling.LANCZOS)
+                    
+                    # Convert RGBA to RGB if needed
+                    if pil_img.mode == 'RGBA':
+                        background = Image.new('RGB', pil_img.size, (255, 255, 255))
+                        background.paste(pil_img, mask=pil_img.split()[3])
+                        pil_img = background
+                    
+                    data_url = image_to_data_url(pil_img, quality=85)
+                    
+                    thumbnails[image_path] = ThumbnailResult(
+                        success=True,
+                        data_url=data_url,
+                        width=pil_img.width,
+                        height=pil_img.height
+                    )
+                    processed_count += 1
+                else:
+                    thumbnails[image_path] = ThumbnailResult(
+                        success=False,
+                        error="Failed to load image with both OpenCV and PIL"
+                    )
+                    
+            except Exception as e:
+                thumbnails[image_path] = ThumbnailResult(
+                    success=False,
+                    error=str(e)
+                )
+        
+        return BatchThumbnailResult(
+            success=True,
+            thumbnails=thumbnails,
+            total_processed=processed_count
+        )
+        
+    except Exception as e:
+        return BatchThumbnailResult(
+            success=False,
+            thumbnails={},
+            total_processed=0,
             error=str(e)
         )
 

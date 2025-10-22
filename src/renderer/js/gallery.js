@@ -9,6 +9,12 @@ class Gallery {
         this.container = document.getElementById('gallery');
         this.thumbnailSize = 200;
         this.loadingThumbnails = new Set();
+        this.thumbnailCache = new Map(); // Cache para thumbnails
+        this.maxCacheSize = 100; // Máximo de thumbnails em cache
+        this.loadQueue = []; // Fila de carregamento
+        this.maxConcurrentLoads = 6; // Carregamento paralelo
+        this.currentLoads = 0;
+        this.preloadDistance = 200; // Distância para pré-carregamento
         
         this.init();
     }
@@ -37,13 +43,13 @@ class Gallery {
                     const imagePath = item.dataset.imagePath;
                     
                     if (imagePath && !this.loadingThumbnails.has(imagePath)) {
-                        this.loadThumbnail(item, imagePath);
+                        this.queueThumbnailLoad(item, imagePath, 'visible');
                         this.observer.unobserve(item);
                     }
                 }
             });
         }, {
-            rootMargin: '100px',
+            rootMargin: `${this.preloadDistance}px`,
             threshold: 0.1
         });
     }
@@ -53,6 +59,8 @@ class Gallery {
         
         // Clear existing content
         this.container.innerHTML = '';
+        this.loadQueue = [];
+        this.currentLoads = 0;
         
         if (images.length === 0) {
             return;
@@ -72,6 +80,9 @@ class Gallery {
         
         // Show gallery
         this.container.classList.remove('hidden');
+        
+        // Pré-carregar primeiros thumbnails imediatamente
+        this.preloadInitialThumbnails(images);
     }
 
     createGalleryItem(image, index) {
@@ -128,6 +139,61 @@ class Gallery {
         return item;
     }
 
+    // Sistema de fila para carregamento paralelo
+    queueThumbnailLoad(item, imagePath, priority = 'normal') {
+        if (this.loadingThumbnails.has(imagePath)) {
+            return;
+        }
+        
+        // Verificar cache primeiro
+        const cacheKey = `${imagePath}_${this.thumbnailSize}`;
+        if (this.thumbnailCache.has(cacheKey)) {
+            this.displayCachedThumbnail(item, cacheKey);
+            return;
+        }
+        
+        const loadItem = { item, imagePath, priority };
+        
+        if (priority === 'visible') {
+            this.loadQueue.unshift(loadItem); // Prioridade alta
+        } else {
+            this.loadQueue.push(loadItem); // Prioridade normal
+        }
+        
+        this.processLoadQueue();
+    }
+    
+    async processLoadQueue() {
+        if (this.currentLoads >= this.maxConcurrentLoads || this.loadQueue.length === 0) {
+            return;
+        }
+        
+        const { item, imagePath } = this.loadQueue.shift();
+        this.currentLoads++;
+        
+        try {
+            await this.loadThumbnail(item, imagePath);
+        } finally {
+            this.currentLoads--;
+            // Processar próximo item da fila
+            setTimeout(() => this.processLoadQueue(), 10);
+        }
+    }
+    
+    displayCachedThumbnail(item, cacheKey) {
+        const cachedData = this.thumbnailCache.get(cacheKey);
+        const img = item.querySelector('img');
+        const spinner = item.querySelector('.spinner');
+        
+        img.onload = () => {
+            if (spinner) spinner.remove();
+            img.style.display = 'block';
+            item.classList.remove('loading');
+        };
+        
+        img.src = cachedData;
+    }
+    
     async loadThumbnail(item, imagePath) {
         if (this.loadingThumbnails.has(imagePath)) {
             return;
@@ -136,19 +202,20 @@ class Gallery {
         this.loadingThumbnails.add(imagePath);
         
         try {
-            console.log(`🔄 Loading thumbnail: ${imagePath}`);
-            
             const result = await window.electronAPI.getThumbnail(imagePath, this.thumbnailSize);
             
             if (result.success && result.data_url) {
+                // Cache do thumbnail com limite de memória
+                const cacheKey = `${imagePath}_${this.thumbnailSize}`;
+                this.addToCache(cacheKey, result.data_url);
+                
                 const img = item.querySelector('img');
                 const spinner = item.querySelector('.spinner');
                 
                 img.onload = () => {
-                    spinner.remove();
+                    if (spinner) spinner.remove();
                     img.style.display = 'block';
                     item.classList.remove('loading');
-                    console.log(`✅ Thumbnail loaded: ${imagePath}`);
                 };
                 
                 img.onerror = () => {
@@ -165,6 +232,89 @@ class Gallery {
             this.handleThumbnailError(item, error.message);
         } finally {
             this.loadingThumbnails.delete(imagePath);
+        }
+    }
+    
+    preloadInitialThumbnails(images) {
+        // Pré-carregar os primeiros 12 thumbnails usando batch processing
+        const initialCount = Math.min(12, images.length);
+        const batchItems = [];
+        
+        for (let i = 0; i < initialCount; i++) {
+            const item = this.container.children[i];
+            if (item) {
+                const imagePath = item.dataset.imagePath;
+                if (imagePath) {
+                    batchItems.push({ item, imagePath });
+                }
+            }
+        }
+        
+        if (batchItems.length > 0) {
+            this.loadBatchThumbnails(batchItems);
+        }
+    }
+    
+    async loadBatchThumbnails(batchItems) {
+        const imagePaths = batchItems.map(item => item.imagePath);
+        
+        // Marcar como carregando
+        batchItems.forEach(({ imagePath }) => {
+            this.loadingThumbnails.add(imagePath);
+        });
+        
+        try {
+            console.log(`🔄 Loading batch of ${imagePaths.length} thumbnails`);
+            
+            const result = await window.electronAPI.getBatchThumbnails(imagePaths, this.thumbnailSize);
+            
+            if (result.success && result.thumbnails) {
+                batchItems.forEach(({ item, imagePath }) => {
+                    const thumbnailResult = result.thumbnails[imagePath];
+                    
+                    if (thumbnailResult && thumbnailResult.success && thumbnailResult.data_url) {
+                        // Cache do thumbnail com limite de memória
+                        const cacheKey = `${imagePath}_${this.thumbnailSize}`;
+                        this.addToCache(cacheKey, thumbnailResult.data_url);
+                        
+                        const img = item.querySelector('img');
+                        const spinner = item.querySelector('.spinner');
+                        
+                        img.onload = () => {
+                            if (spinner) spinner.remove();
+                            img.style.display = 'block';
+                            item.classList.remove('loading');
+                        };
+                        
+                        img.onerror = () => {
+                            this.handleThumbnailError(item, 'Failed to display thumbnail');
+                        };
+                        
+                        img.src = thumbnailResult.data_url;
+                    } else {
+                        this.handleThumbnailError(item, thumbnailResult?.error || 'Failed to generate thumbnail');
+                    }
+                });
+                
+                console.log(`✅ Batch loaded: ${result.total_processed}/${imagePaths.length} thumbnails`);
+            } else {
+                // Fallback para carregamento individual
+                batchItems.forEach(({ item, imagePath }) => {
+                    this.queueThumbnailLoad(item, imagePath, 'preload');
+                });
+            }
+            
+        } catch (error) {
+            console.error('❌ Batch thumbnail error:', error);
+            // Fallback para carregamento individual
+            batchItems.forEach(({ item, imagePath }) => {
+                this.queueThumbnailLoad(item, imagePath, 'preload');
+            });
+        } finally {
+            // Remover da lista de carregamento
+            batchItems.forEach(({ imagePath }) => {
+                this.loadingThumbnails.delete(imagePath);
+            });
         }
     }
 
@@ -190,15 +340,23 @@ class Gallery {
             container.style.height = `${this.thumbnailSize}px`;
         });
         
-        // Update existing thumbnails if needed
-        const items = this.container.querySelectorAll('.gallery-item img');
-        items.forEach(img => {
-            if (img.src && !img.src.startsWith('data:')) {
-                // Reload thumbnail with new size
-                const item = img.closest('.gallery-item');
-                const imagePath = item.dataset.imagePath;
-                if (imagePath) {
-                    this.loadThumbnail(item, imagePath);
+        // Recarregar thumbnails com novo tamanho (verificar cache primeiro)
+        const items = this.container.querySelectorAll('.gallery-item');
+        items.forEach(item => {
+            const imagePath = item.dataset.imagePath;
+            if (imagePath) {
+                const cacheKey = `${imagePath}_${this.thumbnailSize}`;
+                if (this.thumbnailCache.has(cacheKey)) {
+                    // Usar cache se disponível
+                    this.displayCachedThumbnail(item, cacheKey);
+                } else {
+                    // Recarregar com novo tamanho
+                    const img = item.querySelector('img');
+                    if (img && img.src) {
+                        item.classList.add('loading');
+                        img.style.display = 'none';
+                        this.queueThumbnailLoad(item, imagePath, 'visible');
+                    }
                 }
             }
         });
@@ -223,6 +381,23 @@ class Gallery {
     clear() {
         this.container.innerHTML = '';
         this.loadingThumbnails.clear();
+        this.loadQueue = [];
+        this.currentLoads = 0;
+        // Manter cache para reutilização
+    }
+    
+    addToCache(key, value) {
+        // Implementar LRU cache simples
+        if (this.thumbnailCache.size >= this.maxCacheSize) {
+            // Remover o primeiro item (mais antigo)
+            const firstKey = this.thumbnailCache.keys().next().value;
+            this.thumbnailCache.delete(firstKey);
+        }
+        this.thumbnailCache.set(key, value);
+    }
+    
+    clearCache() {
+        this.thumbnailCache.clear();
     }
 
     destroy() {

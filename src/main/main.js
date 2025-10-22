@@ -299,6 +299,23 @@ ipcMain.handle('get-image-info', async (event, imagePath) => {
   }
 });
 
+ipcMain.handle('get-batch-thumbnails', async (event, imagePaths, size = 200) => {
+  try {
+    const response = await backendRequest('/batch-thumbnails', {
+      method: 'POST',
+      body: JSON.stringify({
+        image_paths: imagePaths,
+        size: size
+      })
+    });
+    
+    return response;
+  } catch (error) {
+    console.error('Batch thumbnail generation failed:', error);
+    throw error;
+  }
+});
+
 ipcMain.handle('get-full-image', async (event, imagePath, maxSize = 2048) => {
   try {
     const response = await backendRequest('/full-image', {
