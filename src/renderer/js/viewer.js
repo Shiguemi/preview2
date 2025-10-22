@@ -28,6 +28,83 @@ class ImageViewer {
 
         this.init();
     }
+    
+    swapImages() {
+        // Trocar qual imagem está ativa (double-buffering)
+        if (this.activeImageIndex === 1) {
+            this.activeImageIndex = 2;
+            this.currentImage = this.elements.image2;
+            this.nextImage = this.elements.image1;
+            
+            this.elements.image2.classList.add('active');
+            this.elements.image2.classList.remove('inactive');
+            this.elements.image1.classList.add('inactive');
+            this.elements.image1.classList.remove('active');
+        } else {
+            this.activeImageIndex = 1;
+            this.currentImage = this.elements.image1;
+            this.nextImage = this.elements.image2;
+            
+            this.elements.image1.classList.add('active');
+            this.elements.image1.classList.remove('inactive');
+            this.elements.image2.classList.add('inactive');
+            this.elements.image2.classList.remove('active');
+        }
+        
+        console.log(`🔄 Swapped to image ${this.activeImageIndex}`);
+    }
+    
+    getCurrentImage() {
+        return this.currentImage;
+    }
+    
+    getNextImage() {
+        return this.nextImage;
+    }
+    
+    applyTransformToImage(targetImage) {
+        // Aplicar centralização + transformações de zoom/pan
+        // Usar translate3d para melhor performance
+        const centerX = -50; // Centralização horizontal em %
+        const centerY = -50; // Centralização vertical em %
+        
+        const transform = `translate(${centerX}%, ${centerY}%) translate3d(${this.translateX}px, ${this.translateY}px, 0) scale(${this.scale})`;
+        targetImage.style.transform = transform;
+        
+        console.log(`🔧 Applied transform: scale(${this.scale.toFixed(3)}) translate(${this.translateX}, ${this.translateY})`);
+    }
+    
+    // Método de debug para testar fit-to-screen
+    debugFitToScreen(targetImage) {
+        const container = targetImage.parentElement;
+        const containerRect = container.getBoundingClientRect();
+        
+        console.log(`🔍 Debug Fit-to-Screen:`);
+        console.log(`  Image natural: ${targetImage.naturalWidth}x${targetImage.naturalHeight}`);
+        console.log(`  Container: ${containerRect.width}x${containerRect.height}`);
+        console.log(`  Scale X: ${(containerRect.width / targetImage.naturalWidth).toFixed(3)}`);
+        console.log(`  Scale Y: ${(containerRect.height / targetImage.naturalHeight).toFixed(3)}`);
+        console.log(`  Final scale: ${Math.min(containerRect.width / targetImage.naturalWidth, containerRect.height / targetImage.naturalHeight).toFixed(3)}`);
+    }
+    
+    calculateFitToScreenScale(targetImage) {
+        // Calcular escala para fit-to-screen sem aplicar
+        const container = targetImage.parentElement;
+        
+        if (targetImage.naturalWidth && targetImage.naturalHeight) {
+            const containerRect = container.getBoundingClientRect();
+            const scaleX = containerRect.width / targetImage.naturalWidth;
+            const scaleY = containerRect.height / targetImage.naturalHeight;
+            const finalScale = Math.min(scaleX, scaleY);
+            
+            console.log(`📐 Fit calculation: Image ${targetImage.naturalWidth}x${targetImage.naturalHeight}, Container ${Math.round(containerRect.width)}x${Math.round(containerRect.height)}, Scale: ${finalScale.toFixed(3)}`);
+            
+            return finalScale;
+        }
+        
+        console.warn('⚠️ Cannot calculate fit scale: naturalWidth/Height not available');
+        return 1;
+    }
 
     init() {
         this.initializeElements();
@@ -38,7 +115,8 @@ class ImageViewer {
         this.elements = {
             modal: document.getElementById('image-viewer'),
             backdrop: this.modal?.querySelector('.modal-backdrop'),
-            image: document.getElementById('modal-image'),
+            image1: document.getElementById('modal-image-1'),
+            image2: document.getElementById('modal-image-2'),
             imageName: document.getElementById('modal-image-name'),
             imageDetails: document.getElementById('modal-image-details'),
             imageLoading: document.getElementById('image-loading'),
@@ -52,6 +130,11 @@ class ImageViewer {
             zoomIndicator: document.getElementById('zoom-indicator'),
             preloadIndicator: document.getElementById('preload-indicator')
         };
+        
+        // Sistema de double-buffering
+        this.activeImageIndex = 1; // 1 ou 2
+        this.currentImage = this.elements.image1;
+        this.nextImage = this.elements.image2;
     }
 
     setupEventListeners() {
@@ -75,7 +158,12 @@ class ImageViewer {
     }
 
     setupImageInteractions() {
-        const image = this.elements.image;
+        // Configurar interações para ambas as imagens
+        this.setupImageInteractionsForElement(this.elements.image1);
+        this.setupImageInteractionsForElement(this.elements.image2);
+    }
+    
+    setupImageInteractionsForElement(image) {
         if (!image) return;
 
         // Mouse wheel zoom
@@ -207,6 +295,11 @@ class ImageViewer {
         this.elements.modal.classList.remove('hidden');
         document.body.style.overflow = 'hidden';
 
+        // Reset transformations
+        this.scale = 1;
+        this.translateX = 0;
+        this.translateY = 0;
+
         // Update UI
         this.updateImageInfo();
         this.showImageLoading(true);
@@ -231,7 +324,8 @@ class ImageViewer {
 
         // Reset image state
         this.resetImageTransform();
-        this.elements.image.src = '';
+        this.elements.image1.src = '';
+        this.elements.image2.src = '';
 
         // Limpar cache de preload para liberar memória
         this.clearPreloadCache();
@@ -277,19 +371,39 @@ class ImageViewer {
                 console.log(`⚡ Loading from cache: ${image.name}`);
                 const cachedData = this.preloadCache.get(cacheKey);
 
-                this.elements.image.onload = () => {
+                // Carregar na imagem inativa (double-buffering)
+                const targetImage = this.getNextImage();
+                
+                targetImage.onload = () => {
                     this.showImageLoading(false);
-                    this.fitToScreen();
 
-                    console.log(`✅ Cached image displayed: ${image.name}`);
-                    this.checkIfResized(cachedData.maxSize, cachedData.width, cachedData.height);
-                    setTimeout(() => this.updateCursor(), 100);
+                    // Desabilitar transições para navegação instantânea
+                    targetImage.style.transition = 'none';
 
-                    // Iniciar preloading das imagens adjacentes
-                    this.startPreloading();
+                    // Aguardar um frame para garantir que naturalWidth/Height estejam disponíveis
+                    requestAnimationFrame(() => {
+                        // Debug fit-to-screen
+                        this.debugFitToScreen(targetImage);
+                        
+                        // Calcular e aplicar fit-to-screen na nova imagem
+                        this.scale = this.calculateFitToScreenScale(targetImage);
+                        this.translateX = 0;
+                        this.translateY = 0;
+                        this.applyTransformToImage(targetImage);
+                        
+                        // Trocar imagens instantaneamente (sem flickering)
+                        this.swapImages();
+
+                        console.log(`✅ Cached image displayed: ${image.name} (scale: ${this.scale.toFixed(3)})`);
+                        this.checkIfResized(cachedData.maxSize, cachedData.width, cachedData.height);
+                        this.updateCursor();
+
+                        // Iniciar preloading das imagens adjacentes
+                        this.startPreloading();
+                    });
                 };
 
-                this.elements.image.src = cachedData.data_url;
+                targetImage.src = cachedData.data_url;
                 await this.updateImageDetails();
                 return;
             }
@@ -311,28 +425,45 @@ class ImageViewer {
                     timestamp: Date.now()
                 });
 
-                this.elements.image.onload = () => {
+                // Carregar na imagem inativa (double-buffering)
+                const targetImage = this.getNextImage();
+                
+                targetImage.onload = () => {
                     this.showImageLoading(false);
-                    this.fitToScreen();
 
-                    const actualWidth = this.elements.image.naturalWidth;
-                    const actualHeight = this.elements.image.naturalHeight;
+                    // Desabilitar transições para navegação instantânea
+                    targetImage.style.transition = 'none';
+                    
+                    // Aguardar um frame para garantir que naturalWidth/Height estejam disponíveis
+                    requestAnimationFrame(() => {
+                        // Calcular e aplicar fit-to-screen na nova imagem
+                        this.scale = this.calculateFitToScreenScale(targetImage);
+                        this.translateX = 0;
+                        this.translateY = 0;
+                        this.applyTransformToImage(targetImage);
+                        
+                        // Trocar imagens instantaneamente (sem flickering)
+                        this.swapImages();
 
-                    console.log(`✅ Image loaded: ${image.name} (${actualWidth}x${actualHeight})`);
+                        const actualWidth = targetImage.naturalWidth;
+                        const actualHeight = targetImage.naturalHeight;
 
-                    this.checkIfResized(maxSize, actualWidth, actualHeight);
-                    setTimeout(() => this.updateCursor(), 100);
+                        console.log(`✅ Image loaded: ${image.name} (${actualWidth}x${actualHeight}, scale: ${this.scale.toFixed(3)})`);
 
-                    // Iniciar preloading das imagens adjacentes
-                    this.startPreloading();
+                        this.checkIfResized(maxSize, actualWidth, actualHeight);
+                        this.updateCursor();
+
+                        // Iniciar preloading das imagens adjacentes
+                        this.startPreloading();
+                    });
                 };
 
-                this.elements.image.onerror = () => {
+                targetImage.onerror = () => {
                     this.showImageLoading(false);
                     console.error(`❌ Failed to display image: ${image.name}`);
                 };
 
-                this.elements.image.src = result.data_url;
+                targetImage.src = result.data_url;
                 await this.updateImageDetails();
 
             } else {
@@ -397,7 +528,7 @@ class ImageViewer {
 
     fitToScreen() {
         // Calcular escala para a imagem caber completamente na tela
-        const image = this.elements.image;
+        const image = this.getCurrentImage();
         const container = image.parentElement;
 
         if (image.naturalWidth && image.naturalHeight) {
@@ -418,9 +549,27 @@ class ImageViewer {
         }
     }
 
+    fitToScreenInstant() {
+        // Versão otimizada para navegação rápida - sem logs desnecessários
+        const image = this.getCurrentImage();
+        const container = image.parentElement;
+
+        if (image.naturalWidth && image.naturalHeight) {
+            const containerRect = container.getBoundingClientRect();
+            const scaleX = containerRect.width / image.naturalWidth;
+            const scaleY = containerRect.height / image.naturalHeight;
+
+            this.scale = Math.min(scaleX, scaleY);
+            this.translateX = 0;
+            this.translateY = 0;
+            this.updateImageTransformFast(); // Usar versão rápida
+            this.updateCursor();
+        }
+    }
+
     zoom100() {
         // Show image at true 100% scale (1:1 pixel ratio)
-        const image = this.elements.image;
+        const image = this.getCurrentImage();
 
         if (image.naturalWidth && image.naturalHeight) {
             // Para zoom 1:1, a escala é sempre 1.0
@@ -438,7 +587,7 @@ class ImageViewer {
     }
 
     zoomAt(clientX, clientY, factor) {
-        const image = this.elements.image;
+        const image = this.getCurrentImage();
         const rect = image.getBoundingClientRect();
 
         // Calculate mouse position relative to image
@@ -461,16 +610,14 @@ class ImageViewer {
     }
 
     updateImageTransform() {
-        // Usar translate3d para forçar aceleração de hardware
-        const transform = `translate3d(${this.translateX}px, ${this.translateY}px, 0) scale(${this.scale})`;
-        this.elements.image.style.transform = transform;
+        // Aplicar transformações na imagem atual
+        this.applyTransformToImage(this.getCurrentImage());
         this.updateZoomIndicator();
     }
 
     updateImageTransformFast() {
         // Versão otimizada para drag - sem atualizar zoom indicator
-        const transform = `translate3d(${this.translateX}px, ${this.translateY}px, 0) scale(${this.scale})`;
-        this.elements.image.style.transform = transform;
+        this.applyTransformToImage(this.getCurrentImage());
     }
 
     updateZoomIndicator() {
@@ -481,7 +628,7 @@ class ImageViewer {
     }
 
     updateCursor() {
-        const image = this.elements.image;
+        const image = this.getCurrentImage();
         const container = image.parentElement;
 
         if (image.naturalWidth && image.naturalHeight && container) {
@@ -580,21 +727,39 @@ class ImageViewer {
             const result = await window.electronAPI.getFullImage(image.path, 0);
 
             if (result.success && result.data_url) {
-                this.elements.image.onload = () => {
+                // Carregar na imagem inativa (double-buffering)
+                const targetImage = this.getNextImage();
+                
+                targetImage.onload = () => {
                     this.showImageLoading(false);
-                    this.fitToScreen();
-                    console.log(`✅ FULL resolution loaded: ${image.name} (${this.elements.image.naturalWidth}x${this.elements.image.naturalHeight})`);
 
-                    // Garantir que o cursor seja atualizado após o carregamento
-                    setTimeout(() => this.updateCursor(), 100);
+                    // Desabilitar transições para navegação instantânea
+                    targetImage.style.transition = 'none';
+                    
+                    // Aguardar um frame para garantir que naturalWidth/Height estejam disponíveis
+                    requestAnimationFrame(() => {
+                        // Calcular e aplicar fit-to-screen na nova imagem
+                        this.scale = this.calculateFitToScreenScale(targetImage);
+                        this.translateX = 0;
+                        this.translateY = 0;
+                        this.applyTransformToImage(targetImage);
+                        
+                        // Trocar imagens instantaneamente (sem flickering)
+                        this.swapImages();
+                        
+                        console.log(`✅ FULL resolution loaded: ${image.name} (${targetImage.naturalWidth}x${targetImage.naturalHeight}, scale: ${this.scale.toFixed(3)})`);
+
+                        // Garantir que o cursor seja atualizado após o carregamento
+                        this.updateCursor();
+                    });
                 };
 
-                this.elements.image.onerror = () => {
+                targetImage.onerror = () => {
                     this.showImageLoading(false);
                     console.error(`❌ Failed to display full resolution: ${image.name}`);
                 };
 
-                this.elements.image.src = result.data_url;
+                targetImage.src = result.data_url;
 
                 // Update image details
                 await this.updateImageDetails();
@@ -812,8 +977,8 @@ class ImageViewer {
 
         console.log(`🔄 Starting preload for indices: ${indicesToPreload.join(', ')}`);
 
-        // Preload em background
-        setTimeout(() => this.preloadImages(indicesToPreload), 100);
+        // Preload em background (mais rápido)
+        setTimeout(() => this.preloadImages(indicesToPreload), 10);
     }
 
     async preloadImages(indices) {
@@ -883,7 +1048,12 @@ class ImageViewer {
     }
 
     setupTouchEvents() {
-        const image = this.elements.image;
+        // Configurar touch events para ambas as imagens
+        this.setupTouchEventsForElement(this.elements.image1);
+        this.setupTouchEventsForElement(this.elements.image2);
+    }
+    
+    setupTouchEventsForElement(image) {
         if (!image) return;
 
         let startTouchX, startTouchY, startTranslateX, startTranslateY;
