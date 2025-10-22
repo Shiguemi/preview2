@@ -202,12 +202,17 @@ class Gallery {
         this.loadingThumbnails.add(imagePath);
         
         try {
-            const result = await window.electronAPI.getThumbnail(imagePath, this.thumbnailSize);
+            // Tentar carregar como binário primeiro (mais rápido)
+            const result = await window.electronAPI.getThumbnailBinary(imagePath, this.thumbnailSize);
             
-            if (result.success && result.data_url) {
+            if (result.success && result.binary_data) {
+                // Converter dados binários para Blob e criar URL
+                const blob = new Blob([result.binary_data], { type: 'image/jpeg' });
+                const imageUrl = URL.createObjectURL(blob);
+                
                 // Cache do thumbnail com limite de memória
                 const cacheKey = `${imagePath}_${this.thumbnailSize}`;
-                this.addToCache(cacheKey, result.data_url);
+                this.addToCache(cacheKey, imageUrl);
                 
                 const img = item.querySelector('img');
                 const spinner = item.querySelector('.spinner');
@@ -219,12 +224,33 @@ class Gallery {
                 };
                 
                 img.onerror = () => {
+                    // Limpar URL do objeto em caso de erro
+                    URL.revokeObjectURL(imageUrl);
                     this.handleThumbnailError(item, 'Failed to display thumbnail');
                 };
                 
-                img.src = result.data_url;
+                img.src = imageUrl;
             } else {
-                this.handleThumbnailError(item, result.error || 'Failed to generate thumbnail');
+                // Fallback para Base64 se binário falhar
+                const fallbackResult = await window.electronAPI.getThumbnail(imagePath, this.thumbnailSize);
+                
+                if (fallbackResult.success && fallbackResult.data_url) {
+                    const cacheKey = `${imagePath}_${this.thumbnailSize}`;
+                    this.addToCache(cacheKey, fallbackResult.data_url);
+                    
+                    const img = item.querySelector('img');
+                    const spinner = item.querySelector('.spinner');
+                    
+                    img.onload = () => {
+                        if (spinner) spinner.remove();
+                        img.style.display = 'block';
+                        item.classList.remove('loading');
+                    };
+                    
+                    img.src = fallbackResult.data_url;
+                } else {
+                    this.handleThumbnailError(item, result.error || fallbackResult.error || 'Failed to generate thumbnail');
+                }
             }
             
         } catch (error) {
@@ -256,7 +282,7 @@ class Gallery {
     }
     
     async loadBatchThumbnails(batchItems) {
-        const imagePaths = batchItems.map(item => item.imagePath);
+        console.log(`🔄 Loading batch of ${batchItems.length} thumbnails (parallel binary)`);
         
         // Marcar como carregando
         batchItems.forEach(({ imagePath }) => {
@@ -264,45 +290,54 @@ class Gallery {
         });
         
         try {
-            console.log(`🔄 Loading batch of ${imagePaths.length} thumbnails`);
-            
-            const result = await window.electronAPI.getBatchThumbnails(imagePaths, this.thumbnailSize);
-            
-            if (result.success && result.thumbnails) {
-                batchItems.forEach(({ item, imagePath }) => {
-                    const thumbnailResult = result.thumbnails[imagePath];
+            // Carregar todos os thumbnails em paralelo usando dados binários
+            const promises = batchItems.map(async ({ item, imagePath }) => {
+                try {
+                    const result = await window.electronAPI.getThumbnailBinary(imagePath, this.thumbnailSize);
                     
-                    if (thumbnailResult && thumbnailResult.success && thumbnailResult.data_url) {
-                        // Cache do thumbnail com limite de memória
+                    if (result.success && result.binary_data) {
+                        // Converter dados binários para Blob e criar URL
+                        const blob = new Blob([result.binary_data], { type: 'image/jpeg' });
+                        const imageUrl = URL.createObjectURL(blob);
+                        
+                        // Cache do thumbnail
                         const cacheKey = `${imagePath}_${this.thumbnailSize}`;
-                        this.addToCache(cacheKey, thumbnailResult.data_url);
+                        this.addToCache(cacheKey, imageUrl);
                         
                         const img = item.querySelector('img');
                         const spinner = item.querySelector('.spinner');
                         
-                        img.onload = () => {
-                            if (spinner) spinner.remove();
-                            img.style.display = 'block';
-                            item.classList.remove('loading');
-                        };
-                        
-                        img.onerror = () => {
-                            this.handleThumbnailError(item, 'Failed to display thumbnail');
-                        };
-                        
-                        img.src = thumbnailResult.data_url;
+                        return new Promise((resolve) => {
+                            img.onload = () => {
+                                if (spinner) spinner.remove();
+                                img.style.display = 'block';
+                                item.classList.remove('loading');
+                                resolve({ success: true, imagePath });
+                            };
+                            
+                            img.onerror = () => {
+                                URL.revokeObjectURL(imageUrl);
+                                this.handleThumbnailError(item, 'Failed to display thumbnail');
+                                resolve({ success: false, imagePath, error: 'Display error' });
+                            };
+                            
+                            img.src = imageUrl;
+                        });
                     } else {
-                        this.handleThumbnailError(item, thumbnailResult?.error || 'Failed to generate thumbnail');
+                        this.handleThumbnailError(item, result.error || 'Failed to generate thumbnail');
+                        return { success: false, imagePath, error: result.error };
                     }
-                });
-                
-                console.log(`✅ Batch loaded: ${result.total_processed}/${imagePaths.length} thumbnails`);
-            } else {
-                // Fallback para carregamento individual
-                batchItems.forEach(({ item, imagePath }) => {
-                    this.queueThumbnailLoad(item, imagePath, 'preload');
-                });
-            }
+                } catch (error) {
+                    this.handleThumbnailError(item, error.message);
+                    return { success: false, imagePath, error: error.message };
+                }
+            });
+            
+            // Aguardar todos os thumbnails carregarem
+            const results = await Promise.all(promises);
+            const successCount = results.filter(r => r.success).length;
+            
+            console.log(`✅ Parallel batch loaded: ${successCount}/${batchItems.length} thumbnails`);
             
         } catch (error) {
             console.error('❌ Batch thumbnail error:', error);
@@ -389,14 +424,24 @@ class Gallery {
     addToCache(key, value) {
         // Implementar LRU cache simples
         if (this.thumbnailCache.size >= this.maxCacheSize) {
-            // Remover o primeiro item (mais antigo)
+            // Remover o primeiro item (mais antigo) e limpar URL se necessário
             const firstKey = this.thumbnailCache.keys().next().value;
+            const oldValue = this.thumbnailCache.get(firstKey);
+            if (oldValue && oldValue.startsWith('blob:')) {
+                URL.revokeObjectURL(oldValue);
+            }
             this.thumbnailCache.delete(firstKey);
         }
         this.thumbnailCache.set(key, value);
     }
     
     clearCache() {
+        // Limpar todas as URLs de objeto antes de limpar o cache
+        for (const [key, value] of this.thumbnailCache) {
+            if (value && value.startsWith('blob:')) {
+                URL.revokeObjectURL(value);
+            }
+        }
         this.thumbnailCache.clear();
     }
 

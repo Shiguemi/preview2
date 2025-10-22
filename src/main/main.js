@@ -266,6 +266,47 @@ ipcMain.handle('scan-folder', async (event, folderPath, recursive = false) => {
   }
 });
 
+ipcMain.handle('get-thumbnail-binary', async (event, imagePath, size = 200) => {
+  try {
+    const url = `${BACKEND_URL}/thumbnail-binary`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        image_path: imagePath,
+        size: size
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Backend request failed: ${response.status}`);
+    }
+
+    // Get image dimensions from headers
+    const width = parseInt(response.headers.get('X-Image-Width') || '0');
+    const height = parseInt(response.headers.get('X-Image-Height') || '0');
+    
+    // Get binary data
+    const arrayBuffer = await response.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    
+    return {
+      success: true,
+      binary_data: uint8Array,
+      width: width,
+      height: height
+    };
+  } catch (error) {
+    console.error('Binary thumbnail generation failed:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+});
+
 ipcMain.handle('get-thumbnail', async (event, imagePath, size = 200) => {
   try {
     const response = await backendRequest('/thumbnail', {

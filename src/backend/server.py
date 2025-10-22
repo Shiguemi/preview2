@@ -18,6 +18,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 try:
     from fastapi import FastAPI, HTTPException
     from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import Response
     from pydantic import BaseModel
     import uvicorn
     from PIL import Image
@@ -204,8 +205,16 @@ def create_thumbnail(img_array: np.ndarray, size: int) -> Image.Image:
     
     return pil_img
 
+def image_to_bytes(pil_img: Image.Image, format: str = 'JPEG', quality: int = 90) -> bytes:
+    """Convert PIL Image to bytes"""
+    import io
+    
+    buffer = io.BytesIO()
+    pil_img.save(buffer, format=format, quality=quality)
+    return buffer.getvalue()
+
 def image_to_data_url(pil_img: Image.Image, format: str = 'JPEG', quality: int = 90) -> str:
-    """Convert PIL Image to data URL"""
+    """Convert PIL Image to data URL (legacy support)"""
     import io
     
     buffer = io.BytesIO()
@@ -268,9 +277,62 @@ async def scan_folder(request: ScanFolderRequest):
             error=str(e)
         )
 
+@app.post("/thumbnail-binary")
+async def generate_thumbnail_binary(request: ThumbnailRequest):
+    """Generate thumbnail for image and return binary data"""
+    try:
+        image_path = request.image_path
+        
+        if not os.path.exists(image_path):
+            raise HTTPException(status_code=404, detail="Image file not found")
+        
+        # Try OpenCV first (better for EXR)
+        img_array = load_image_opencv(image_path)
+        
+        if img_array is not None:
+            # Create thumbnail from numpy array
+            thumbnail = create_thumbnail(img_array, request.size)
+            img_bytes = image_to_bytes(thumbnail, quality=85)
+            
+            return Response(
+                content=img_bytes,
+                media_type="image/jpeg",
+                headers={
+                    "X-Image-Width": str(thumbnail.width),
+                    "X-Image-Height": str(thumbnail.height)
+                }
+            )
+        
+        # Fallback to PIL
+        pil_img = load_image_pil(image_path)
+        if pil_img is not None:
+            pil_img.thumbnail((request.size, request.size), Image.Resampling.LANCZOS)
+            
+            # Convert RGBA to RGB if needed
+            if pil_img.mode == 'RGBA':
+                background = Image.new('RGB', pil_img.size, (255, 255, 255))
+                background.paste(pil_img, mask=pil_img.split()[3])
+                pil_img = background
+            
+            img_bytes = image_to_bytes(pil_img, quality=85)
+            
+            return Response(
+                content=img_bytes,
+                media_type="image/jpeg",
+                headers={
+                    "X-Image-Width": str(pil_img.width),
+                    "X-Image-Height": str(pil_img.height)
+                }
+            )
+        
+        raise HTTPException(status_code=500, detail="Failed to load image with both OpenCV and PIL")
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/thumbnail", response_model=ThumbnailResult)
 async def generate_thumbnail(request: ThumbnailRequest):
-    """Generate thumbnail for image"""
+    """Generate thumbnail for image (legacy Base64 support)"""
     try:
         image_path = request.image_path
         
@@ -375,9 +437,11 @@ async def get_image_info(request: ImageInfoRequest):
             error=str(e)
         )
 
+
+
 @app.post("/batch-thumbnails", response_model=BatchThumbnailResult)
 async def generate_batch_thumbnails(request: BatchThumbnailRequest):
-    """Generate multiple thumbnails in batch for better performance"""
+    """Generate multiple thumbnails in batch for better performance (legacy Base64)"""
     try:
         thumbnails = {}
         processed_count = 0
