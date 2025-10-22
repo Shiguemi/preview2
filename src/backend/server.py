@@ -65,7 +65,7 @@ class ImageInfoRequest(BaseModel):
 
 class FullImageRequest(BaseModel):
     image_path: str
-    max_size: int = 2048
+    max_size: int = 0  # 0 = sem limite, valor padrão para resolução completa
 
 # Response models
 class ImageFile(BaseModel):
@@ -518,6 +518,59 @@ async def generate_batch_thumbnails(request: BatchThumbnailRequest):
             error=str(e)
         )
 
+@app.post("/full-image-binary")
+async def get_full_image_binary(request: FullImageRequest):
+    """Get full resolution image as binary data"""
+    try:
+        image_path = request.image_path
+        
+        if not os.path.exists(image_path):
+            raise HTTPException(status_code=404, detail="Image file not found")
+        
+        # Try OpenCV first
+        img_array = load_image_opencv(image_path)
+        
+        if img_array is not None:
+            # Process HDR images
+            if img_array.dtype in [np.float32, np.float64]:
+                img_array = process_hdr_image(img_array)
+            
+            # Convert to PIL
+            if len(img_array.shape) == 2:
+                pil_img = Image.fromarray(img_array, mode='L')
+            elif img_array.shape[2] == 3:
+                pil_img = Image.fromarray(img_array, mode='RGB')
+            elif img_array.shape[2] == 4:
+                pil_img = Image.fromarray(img_array, mode='RGBA')
+            else:
+                raise ValueError(f"Unsupported image shape: {img_array.shape}")
+            
+            # Resize if too large (max_size = 0 means no limit)
+            if request.max_size > 0:
+                pil_img.thumbnail((request.max_size, request.max_size), Image.Resampling.LANCZOS)
+            
+            # Convert RGBA to RGB for JPEG
+            if pil_img.mode == 'RGBA':
+                background = Image.new('RGB', pil_img.size, (255, 255, 255))
+                background.paste(pil_img, mask=pil_img.split()[3])
+                pil_img = background
+            
+            img_bytes = image_to_bytes(pil_img, quality=95)
+            
+            return Response(
+                content=img_bytes,
+                media_type="image/jpeg",
+                headers={
+                    "X-Image-Width": str(pil_img.width),
+                    "X-Image-Height": str(pil_img.height)
+                }
+            )
+        
+        raise HTTPException(status_code=500, detail="Failed to load full image")
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/full-image", response_model=ThumbnailResult)
 async def get_full_image(request: FullImageRequest):
     """Get full resolution image (with optional max size limit)"""
@@ -545,7 +598,7 @@ async def get_full_image(request: FullImageRequest):
             else:
                 raise ValueError(f"Unsupported image shape: {img_array.shape}")
             
-            # Resize if too large
+            # Resize if too large (max_size = 0 means no limit)
             if request.max_size > 0:
                 pil_img.thumbnail((request.max_size, request.max_size), Image.Resampling.LANCZOS)
             

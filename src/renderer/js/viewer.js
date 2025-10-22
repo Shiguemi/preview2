@@ -34,7 +34,8 @@ class ImageViewer {
             prevBtn: document.getElementById('prev-image'),
             nextBtn: document.getElementById('next-image'),
             zoomFitBtn: document.getElementById('zoom-fit'),
-            zoom100Btn: document.getElementById('zoom-100')
+            zoom100Btn: document.getElementById('zoom-100'),
+            loadFullResBtn: document.getElementById('load-full-res')
         };
     }
 
@@ -48,6 +49,7 @@ class ImageViewer {
         // Zoom controls
         this.elements.zoomFitBtn?.addEventListener('click', () => this.fitToScreen());
         this.elements.zoom100Btn?.addEventListener('click', () => this.zoom100());
+        this.elements.loadFullResBtn?.addEventListener('click', () => this.loadFullResolution());
         
         // Keyboard navigation
         document.addEventListener('keydown', (e) => this.handleKeyboard(e));
@@ -185,13 +187,38 @@ class ImageViewer {
         try {
             console.log(`🔄 Loading full image: ${image.path}`);
             
-            const result = await window.electronAPI.getFullImage(image.path, 2048);
+            // Estratégia inteligente de carregamento baseada na tela e memória disponível
+            const screenWidth = window.screen.width;
+            const screenHeight = window.screen.height;
+            const maxScreenDimension = Math.max(screenWidth, screenHeight);
+            
+            // Para telas 4K+ (>= 2160p), carregar resolução completa
+            // Para telas menores, usar 2x a resolução da tela para permitir zoom
+            let maxSize;
+            if (maxScreenDimension >= 2160) {
+                maxSize = 0; // Sem limite para telas 4K+
+            } else if (maxScreenDimension >= 1440) {
+                maxSize = maxScreenDimension * 2; // 2x para telas QHD+
+            } else {
+                maxSize = Math.max(2048, maxScreenDimension * 1.5); // Mínimo 2048px
+            }
+            
+            console.log(`📐 Screen: ${screenWidth}x${screenHeight}, Max size: ${maxSize === 0 ? 'unlimited' : maxSize}`);
+            
+            const result = await window.electronAPI.getFullImage(image.path, maxSize);
             
             if (result.success && result.data_url) {
                 this.elements.image.onload = () => {
                     this.showImageLoading(false);
                     this.fitToScreen();
-                    console.log(`✅ Full image loaded: ${image.name}`);
+                    
+                    const actualWidth = this.elements.image.naturalWidth;
+                    const actualHeight = this.elements.image.naturalHeight;
+                    
+                    console.log(`✅ Image loaded: ${image.name} (${actualWidth}x${actualHeight})`);
+                    
+                    // Mostrar indicador se a imagem foi redimensionada
+                    this.checkIfResized(maxSize, actualWidth, actualHeight);
                 };
                 
                 this.elements.image.onerror = () => {
@@ -336,6 +363,70 @@ class ImageViewer {
                 event.preventDefault();
                 this.zoom100();
                 break;
+            case 'f':
+            case 'F':
+                event.preventDefault();
+                this.loadFullResolution();
+                break;
+        }
+    }
+
+    checkIfResized(maxSize, actualWidth, actualHeight) {
+        if (maxSize > 0 && (actualWidth >= maxSize || actualHeight >= maxSize)) {
+            // Imagem foi redimensionada, mostrar indicador
+            const fullResBtn = this.elements.loadFullResBtn;
+            if (fullResBtn) {
+                fullResBtn.style.backgroundColor = '#ff6b35';
+                fullResBtn.style.borderColor = '#ff6b35';
+                fullResBtn.title = 'Image was resized - Click to load full resolution (F)';
+            }
+        } else {
+            // Imagem em resolução completa
+            const fullResBtn = this.elements.loadFullResBtn;
+            if (fullResBtn) {
+                fullResBtn.style.backgroundColor = '';
+                fullResBtn.style.borderColor = '';
+                fullResBtn.title = 'Load full resolution (F)';
+            }
+        }
+    }
+
+    async loadFullResolution() {
+        if (!this.isOpen || this.currentIndex < 0) return;
+        
+        const image = this.images[this.currentIndex];
+        
+        try {
+            console.log(`🔍 Loading FULL resolution: ${image.path}`);
+            this.showImageLoading(true);
+            
+            // Forçar carregamento sem limite de tamanho
+            const result = await window.electronAPI.getFullImage(image.path, 0);
+            
+            if (result.success && result.data_url) {
+                this.elements.image.onload = () => {
+                    this.showImageLoading(false);
+                    this.fitToScreen();
+                    console.log(`✅ FULL resolution loaded: ${image.name} (${this.elements.image.naturalWidth}x${this.elements.image.naturalHeight})`);
+                };
+                
+                this.elements.image.onerror = () => {
+                    this.showImageLoading(false);
+                    console.error(`❌ Failed to display full resolution: ${image.name}`);
+                };
+                
+                this.elements.image.src = result.data_url;
+                
+                // Update image details
+                await this.updateImageDetails();
+                
+            } else {
+                throw new Error(result.error || 'Failed to load full resolution');
+            }
+            
+        } catch (error) {
+            console.error(`❌ Error loading full resolution: ${error.message}`);
+            this.showImageLoading(false);
         }
     }
 

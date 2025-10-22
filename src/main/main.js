@@ -357,7 +357,7 @@ ipcMain.handle('get-batch-thumbnails', async (event, imagePaths, size = 200) => 
   }
 });
 
-ipcMain.handle('get-full-image', async (event, imagePath, maxSize = 2048) => {
+ipcMain.handle('get-full-image', async (event, imagePath, maxSize = 0) => {
   try {
     const response = await backendRequest('/full-image', {
       method: 'POST',
