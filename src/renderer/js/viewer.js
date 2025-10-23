@@ -17,6 +17,14 @@ class ImageViewer {
         this.controlsTimeout = null;
         this.dragAnimationFrame = null;
         this.lastDragTime = 0;
+        
+        // Drag state
+        this.dragState = {
+            startX: 0,
+            startY: 0,
+            startTranslateX: 0,
+            startTranslateY: 0
+        };
 
         // Preloading system
         this.preloadCache = new Map(); // Cache de imagens pré-carregadas
@@ -138,6 +146,49 @@ class ImageViewer {
         return 1;
     }
 
+    syncTransformFromDOM(targetImage) {
+        // Sincronizar translateX/Y do estado com o transform realmente aplicado no DOM
+        // Isso evita "saltos" quando há pequenas divergências entre memória e DOM
+        try {
+            const computedStyle = window.getComputedStyle(targetImage);
+            const transform = computedStyle.transform;
+            
+            if (transform && transform !== 'none') {
+                // Parse da matrix: matrix(a, b, c, d, tx, ty)
+                const matrixMatch = transform.match(/matrix\(([^)]+)\)/);
+                if (matrixMatch) {
+                    const values = matrixMatch[1].split(',').map(v => parseFloat(v.trim()));
+                    if (values.length === 6) {
+                        // values[4] = translateX, values[5] = translateY (em pixels)
+                        // values[0] = scaleX, values[3] = scaleY
+                        
+                        // Extrair a parte de translate3d da composição
+                        // Nossa transform é: translate(-50%, -50%) translate3d(X, Y, 0) scale(S)
+                        // A matrix final inclui tudo, então precisamos extrair apenas o translate3d
+                        
+                        // Como temos translate(-50%, -50%) no início, precisamos compensar
+                        const centerOffsetX = -targetImage.offsetWidth / 2;
+                        const centerOffsetY = -targetImage.offsetHeight / 2;
+                        
+                        // O translate total na matrix inclui o -50%/-50% + translate3d
+                        // Então: translate3d = matrix_translate - center_offset
+                        const tx = values[4] - centerOffsetX;
+                        const ty = values[5] - centerOffsetY;
+                        
+                        // Atualizar apenas se os valores forem números válidos
+                        if (!isNaN(tx) && !isNaN(ty)) {
+                            this.translateX = tx;
+                            this.translateY = ty;
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            // Se falhar a leitura do DOM, manter valores atuais
+            console.warn('⚠️ Failed to sync transform from DOM:', e);
+        }
+    }
+
     init() {
         this.initializeElements();
         this.setupEventListeners();
@@ -194,54 +245,13 @@ class ImageViewer {
         // Configurar interações para ambas as imagens
         this.setupImageInteractionsForElement(this.elements.image1);
         this.setupImageInteractionsForElement(this.elements.image2);
+        
+        // Configurar listeners globais de drag (apenas uma vez)
+        this.setupGlobalDragListeners();
     }
     
-    setupImageInteractionsForElement(image) {
-        if (!image) return;
-
-        // Mouse wheel zoom
-        image.addEventListener('wheel', (e) => {
-            if (!this.isOpen) return;
-
-            e.preventDefault();
-            const delta = e.deltaY > 0 ? 0.9 : 1.1;
-            this.zoomAt(e.clientX, e.clientY, delta);
-        });
-
-        // Mouse drag
-        let startX, startY, startTranslateX, startTranslateY;
-
-        image.addEventListener('mousedown', (e) => {
-            if (!this.isOpen) return;
-
-            // Verificar se a imagem é maior que o container (precisa de drag)
-            const container = image.parentElement;
-            const containerRect = container.getBoundingClientRect();
-            const scaledWidth = image.naturalWidth * this.scale;
-            const scaledHeight = image.naturalHeight * this.scale;
-
-            const needsDrag = scaledWidth > containerRect.width || scaledHeight > containerRect.height;
-
-            if (!needsDrag) return;
-
-            this.isDragging = true;
-            startX = e.clientX;
-            startY = e.clientY;
-            startTranslateX = this.translateX;
-            startTranslateY = this.translateY;
-
-            // Desabilitar transições durante o drag para melhor performance
-            image.style.transition = 'none';
-            image.style.cursor = 'grabbing';
-
-            // Desabilitar pointer events no zoom indicator durante drag
-            if (this.elements.zoomIndicator) {
-                this.elements.zoomIndicator.style.pointerEvents = 'none';
-            }
-
-            e.preventDefault();
-        });
-
+    setupGlobalDragListeners() {
+        // Listeners globais de mousemove e mouseup (registrados apenas uma vez)
         document.addEventListener('mousemove', (e) => {
             if (!this.isDragging) return;
 
@@ -257,8 +267,11 @@ class ImageViewer {
 
             // Usar requestAnimationFrame para suavizar o movimento
             this.dragAnimationFrame = requestAnimationFrame(() => {
-                this.translateX = startTranslateX + (e.clientX - startX);
-                this.translateY = startTranslateY + (e.clientY - startY);
+                const dx = e.clientX - this.dragState.startX;
+                const dy = e.clientY - this.dragState.startY;
+
+                this.translateX = this.dragState.startTranslateX + dx;
+                this.translateY = this.dragState.startTranslateY + dy;
                 this.updateImageTransformFast();
                 this.dragAnimationFrame = null;
             });
@@ -275,7 +288,9 @@ class ImageViewer {
                 }
 
                 // Reabilitar transições
-                image.style.transition = '';
+                const activeImage = this.getCurrentImage();
+                activeImage.style.transition = '';
+                activeImage.style.cursor = '';
 
                 // Reabilitar pointer events no zoom indicator
                 if (this.elements.zoomIndicator) {
@@ -286,6 +301,62 @@ class ImageViewer {
                 this.updateCursor();
                 this.updateZoomIndicator();
             }
+        });
+    }
+    
+    setupImageInteractionsForElement(image) {
+        if (!image) return;
+
+        // Disable native browser drag to prevent interference
+        image.setAttribute('draggable', 'false');
+        image.style.userSelect = 'none';
+
+        // Mouse wheel zoom
+        image.addEventListener('wheel', (e) => {
+            if (!this.isOpen) return;
+
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? 0.9 : 1.1;
+            this.zoomAt(e.clientX, e.clientY, delta);
+        });
+
+        // Mouse drag - apenas mousedown (movemove/up são globais)
+        image.addEventListener('mousedown', (e) => {
+            if (!this.isOpen) return;
+            if (e.button !== 0) return; // Apenas botão esquerdo
+
+            // Sempre usar a imagem ativa (double-buffer safe)
+            const activeImage = this.getCurrentImage();
+
+            // Verificar se a imagem é maior que o container (precisa de drag)
+            const container = activeImage.parentElement;
+            const containerRect = container.getBoundingClientRect();
+            const scaledWidth = activeImage.naturalWidth * this.scale;
+            const scaledHeight = activeImage.naturalHeight * this.scale;
+
+            const needsDrag = scaledWidth > containerRect.width || scaledHeight > containerRect.height;
+
+            if (!needsDrag) return;
+
+            // Sincronizar estado com o DOM atual para evitar salto
+            this.syncTransformFromDOM(activeImage);
+
+            this.isDragging = true;
+            this.dragState.startX = e.clientX;
+            this.dragState.startY = e.clientY;
+            this.dragState.startTranslateX = this.translateX;
+            this.dragState.startTranslateY = this.translateY;
+
+            // Desabilitar transições durante o drag para melhor performance
+            activeImage.style.transition = 'none';
+            activeImage.style.cursor = 'grabbing';
+
+            // Desabilitar pointer events no zoom indicator durante drag
+            if (this.elements.zoomIndicator) {
+                this.elements.zoomIndicator.style.pointerEvents = 'none';
+            }
+
+            e.preventDefault();
         });
 
         // Double-click to toggle between fit-to-screen and 2x zoom
@@ -659,14 +730,12 @@ async loadCurrentImage() {
 
             const needsDrag = scaledWidth > containerRect.width || scaledHeight > containerRect.height;
 
-            if (this.isFullscreen) {
-                // No fullscreen, usar classes CSS para controle do cursor
-                image.classList.toggle('draggable', needsDrag);
-            } else {
-                // No modal normal, usar style direto
-                image.style.cursor = needsDrag ? 'grab' : 'default';
-                image.classList.remove('draggable');
-            }
+            // Sempre definir cursor via style para garantir visibilidade
+            // (inline style sobrescreve regras CSS que podem ter cursor: none)
+            image.style.cursor = needsDrag ? 'grab' : 'default';
+            
+            // Manter classe para compatibilidade, mas cursor é controlado por style
+            image.classList.toggle('draggable', needsDrag);
         }
     }
 
